@@ -848,6 +848,7 @@ addEventListener('keyup', e => {
 //  AUDIO — procedural Web Audio (no asset files)
 // ─────────────────────────────────────────────
 let actx = null, master = null, engineGain = null, muted = false;
+let musicGain = null, seqTimer = null, seqStep = 0, nextNoteT = 0;
 function initAudio() {
   if (actx) { if (actx.state === 'suspended') actx.resume(); return; }
   const AC = window.AudioContext || window.webkitAudioContext;
@@ -869,6 +870,57 @@ function initAudio() {
   const lfoG = actx.createGain(); lfoG.gain.value = 0.025;
   lfo.connect(lfoG); lfoG.connect(ag.gain);
   a1.connect(ag); a2.connect(ag); a1.start(); a2.start(); lfo.start();
+
+  startMusic();   // retro chiptune loop on top of the drone
+}
+
+// ── Retro chiptune loop (procedural step sequencer) ──
+const BPM = 132, STEP_DUR = 60 / BPM / 4;           // 16th-note duration
+const midiHz = n => 440 * Math.pow(2, (n - 69) / 12);
+const CHORDS = [                                     // Am – F – C – G, one bar each
+  { bass: 45, tri: [57, 60, 64] },
+  { bass: 41, tri: [53, 57, 60] },
+  { bass: 48, tri: [60, 64, 67] },
+  { bass: 43, tri: [55, 59, 62] },
+];
+const ARP = [0,1,2,1, 2,1,0,1, 0,1,2,3, 2,1,0,1];    // index into [root,3rd,5th,octave]
+function musicNote(freq, t, dur, type, vol) {
+  const o = actx.createOscillator(); o.type = type; o.frequency.value = freq;
+  const g = actx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol, t + 0.012);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g); g.connect(musicGain); o.start(t); o.stop(t + dur + 0.02);
+}
+function musicHat(t) {
+  const dur = 0.05, n = actx.createBufferSource();
+  const buf = actx.createBuffer(1, Math.max(1, actx.sampleRate * dur), actx.sampleRate);
+  const d = buf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  n.buffer = buf;
+  const hp = actx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 6500;
+  const g = actx.createGain(); g.gain.setValueAtTime(0.05, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  n.connect(hp); hp.connect(g); g.connect(musicGain); n.start(t); n.stop(t + dur + 0.02);
+}
+function playStep(step, t) {
+  const ch = CHORDS[Math.floor(step / 16) % CHORDS.length], s = step % 16;
+  if (s === 0 || s === 4 || s === 8 || s === 12)        // bouncy quarter-note bass
+    musicNote(midiHz(ch.bass + ((s === 4 || s === 12) ? 12 : 0)), t, STEP_DUR * 1.7, 'square', 0.5);
+  const ai = ARP[s], note = ai < 3 ? ch.tri[ai] : ch.tri[0] + 12;   // 16th-note arpeggio
+  musicNote(midiHz(note), t, STEP_DUR * 0.9, 'triangle', 0.34);
+  if (s % 2 === 1) musicHat(t);                          // off-beat hat
+}
+function startMusic() {
+  if (!actx || seqTimer) return;
+  musicGain = actx.createGain(); musicGain.gain.value = 0.16; musicGain.connect(master);
+  seqStep = 0; nextNoteT = actx.currentTime + 0.1;
+  seqTimer = setInterval(() => {
+    if (!actx || actx.state !== 'running') return;       // don't pile up while suspended
+    while (nextNoteT < actx.currentTime + 0.12) {
+      playStep(seqStep, nextNoteT);
+      nextNoteT += STEP_DUR;
+      seqStep = (seqStep + 1) % (16 * CHORDS.length);     // 4-bar loop
+    }
+  }, 25);
 }
 function tone(freq, dur, type, vol, slideTo) {
   if (!actx || muted) return;
