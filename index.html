@@ -1,0 +1,1448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Road Blaster 2026</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+
+:root { --sidebar: 96px; }
+
+html, body {
+  width:100%; height:100%;
+  background:#223524;
+  font-family:'Segoe UI Mono','SF Mono','Courier New',monospace;
+  overflow:hidden;
+  color:#fff;
+}
+
+/* ── GAME WORLD (right of the sidebar, so the sidebar never covers the map) ── */
+#c { display:block; position:fixed; top:0; left:var(--sidebar); width:calc(100vw - var(--sidebar)); height:100vh; z-index:0; }
+
+/* Subtle vignette over the world only */
+.vignette {
+  position:fixed; top:0; left:var(--sidebar); right:0; bottom:0; pointer-events:none; z-index:5;
+  background:radial-gradient(ellipse 75% 75% at 50% 45%, transparent 45%, rgba(0,0,0,0.5) 100%);
+}
+
+/* Shared floating-panel look */
+.panel {
+  position:fixed; z-index:10;
+  background:linear-gradient(180deg, rgba(6,12,20,0.92), rgba(4,8,14,0.88));
+  border:1px solid #16344e;
+  box-shadow:0 6px 24px rgba(0,0,0,0.55), inset 0 0 0 1px rgba(0,160,255,0.05);
+  backdrop-filter:blur(2px);
+}
+.panel-head {
+  display:flex; align-items:center; gap:8px;
+  padding:5px 10px; border-bottom:1px solid #0e2438;
+  background:rgba(0,160,255,0.06);
+}
+.panel-head .dot { width:7px; height:7px; border-radius:50%; background:#00aaff; box-shadow:0 0 8px #00aaff; }
+.panel-head .ttl { font-size:9px; letter-spacing:3px; color:#3a82b8; text-transform:uppercase; }
+
+/* ── SIDEBAR (left; the map is offset so this never covers it) ── */
+#sidebar {
+  position:fixed; top:0; left:0; width:var(--sidebar); height:100vh; z-index:10;
+  background:linear-gradient(180deg, rgba(6,12,20,0.96), rgba(4,8,14,0.94));
+  border-right:1px solid #16344e;
+  display:flex; flex-direction:column; gap:11px; padding:14px 8px;
+}
+.game-title { font-size:13px; font-weight:700; letter-spacing:1px; text-transform:uppercase; line-height:1.3;
+  color:#00aaff; text-shadow:0 0 12px rgba(0,160,255,0.7); }
+.game-title b { color:#ff3300; text-shadow:0 0 9px rgba(255,50,0,0.7); }
+.sb-divider { height:1px; background:#16344e; }
+.stat-row { display:flex; flex-direction:column; gap:1px; }
+.stat-label { font-size:8px; letter-spacing:1px; color:#3a6088; text-transform:uppercase; }
+.stat-val   { font-size:17px; font-weight:700; color:#ffcc00; letter-spacing:1px; line-height:1; }
+.stat-val.hi { color:#ff4400; }
+.zone-badge { align-self:flex-start; font-size:11px; letter-spacing:2px; color:#00aaff;
+  border:1px solid #003355; padding:2px 7px; text-transform:uppercase; }
+.sb-controls { font-size:8px; letter-spacing:1px; color:#2a4f70; text-transform:uppercase; line-height:1.9; }
+.sb-controls b { color:#5aa0d8; }
+.sb-label { font-size:8px; letter-spacing:1px; color:#3a6088; text-transform:uppercase; }
+
+/* active power-ups (in sidebar) */
+#powerups { display:flex; flex-direction:column; gap:5px; }
+#powerups .pu { font-size:9px; letter-spacing:1px; padding:4px 6px;
+  border:1px solid; border-radius:4px; background:rgba(4,8,14,0.8); text-transform:uppercase; }
+.sb-spacer { flex:1; }
+
+/* progress overlay */
+#progress {
+  position:fixed; inset:0; background:rgba(3,6,12,0.92); z-index:30;
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px;
+}
+#progress p { font-size:10px; letter-spacing:4px; color:#004488; text-transform:uppercase; }
+#pbar-wrap { width:220px; height:3px; background:#0a1a2a; }
+#pbar { height:100%; background:#0088ff; width:0%; transition:width 0.1s; }
+
+/* start + game-over overlays */
+#start, #gameover {
+  position:fixed; inset:0; background:rgba(3,6,12,0.82); z-index:40;
+  display:none; flex-direction:column; align-items:center; justify-content:center; gap:12px;
+}
+#start { display:none; }
+.go-title { font-size:30px; font-weight:700; letter-spacing:8px; text-shadow:0 0 24px currentColor; }
+.go-sub { font-size:12px; letter-spacing:3px; color:#6f8aa6; text-transform:uppercase; }
+.go-hint { font-size:10px; letter-spacing:2px; color:#2a4f70; text-transform:uppercase; margin-top:4px; }
+.game-btn {
+  margin-top:14px; padding:11px 34px; font-size:13px; letter-spacing:4px; font-weight:700;
+  text-transform:uppercase; color:#04101c; background:#00aaff; border:none; border-radius:5px;
+  cursor:pointer; box-shadow:0 0 22px rgba(0,160,255,0.5); transition:transform .08s, background .15s;
+}
+.game-btn:hover { background:#33bbff; }
+.game-btn:active { transform:scale(0.96); }
+</style>
+</head>
+<body>
+
+  <!-- FULL-WINDOW GAME WORLD -->
+  <canvas id="c"></canvas>
+  <div class="vignette"></div>
+
+  <!-- SIDEBAR (left) -->
+  <div id="sidebar">
+    <div class="game-title">ROAD<br><b>BLASTER</b></div>
+    <div class="sb-divider"></div>
+    <div class="stat-row"><span class="stat-label">Lives</span><span class="stat-val" id="livesVal">3</span></div>
+    <div class="stat-row"><span class="stat-label">Score</span><span class="stat-val">14200</span></div>
+    <div class="stat-row"><span class="stat-label">Enemies</span><span class="stat-val hi" id="enemyCount">20</span></div>
+    <div class="stat-row"><span class="stat-label">Combo</span><span class="stat-val">x3</span></div>
+    <div class="stat-row"><span class="stat-label">Zone</span><span class="zone-badge">01</span></div>
+    <div class="sb-divider"></div>
+    <div class="sb-label">Power-ups</div>
+    <div id="powerups"></div>
+    <div class="sb-spacer"></div>
+    <div class="sb-divider"></div>
+    <div class="sb-controls"><b>ARROWS</b> drive<br><b>SPACE</b> fire<br><b>SHIFT</b> turbo</div>
+  </div>
+
+  <!-- LOADING -->
+  <div id="progress">
+    <p>Loading assets</p>
+    <div id="pbar-wrap"><div id="pbar"></div></div>
+  </div>
+
+  <div id="start">
+    <div class="go-title" style="color:#00aaff">ROAD BLASTER</div>
+    <div class="go-sub">Defend the core — clear the wave</div>
+    <button id="startBtn" class="game-btn">Start</button>
+    <div class="go-hint">ARROW KEYS drive · SPACE fire · SHIFT turbo</div>
+  </div>
+
+  <div id="gameover">
+    <div class="go-title">ZONE CLEAR</div>
+    <div class="go-sub">All hostiles eliminated</div>
+    <button id="restartBtn" class="game-btn">Restart</button>
+  </div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three":              "https://cdn.jsdelivr.net/npm/three@0.160/build/three.module.js",
+    "three/addons/":      "https://cdn.jsdelivr.net/npm/three@0.160/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+// ─────────────────────────────────────────────
+//  RENDERER
+// ─────────────────────────────────────────────
+const SIDEBAR_W = 96;                                   // matches --sidebar in CSS
+let CW = window.innerWidth - SIDEBAR_W, CH = window.innerHeight;   // world fills area right of sidebar
+const canvas  = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias:true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(CW, CH);
+renderer.shadowMap.enabled  = true;
+renderer.shadowMap.type     = THREE.PCFSoftShadowMap;
+renderer.toneMapping        = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 2.0;
+renderer.setClearColor(0x223524);   // match ground tone — no black fringes
+
+// ─────────────────────────────────────────────
+//  SCENE
+// ─────────────────────────────────────────────
+const scene = new THREE.Scene();
+
+// ─────────────────────────────────────────────
+//  ISOMETRIC CAMERA
+//  Classic isometric: camera at equal (D,D,D) offset from centre
+//  → 45° horizontal rotation, 35.26° elevation  (arctan 1/√2)
+// ─────────────────────────────────────────────
+const COLS = 14, ROWS = 14, TS = 2;
+const MAP_W = (COLS - 1) * TS;   // 26
+const MAP_D = (ROWS - 1) * TS;   // 26
+const CX = MAP_W / 2;            // 13
+const CZ = MAP_D / 2;            // 13
+
+// Orthographic isometric, full-window. Frustum sized so the field fills view.
+const D  = 40;           // iso distance (ortho: only direction matters)
+const VIEW_H = 22;       // vertical world units visible — controls zoom
+
+const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 400);
+function frameCamera() {
+  const aspect = CW / CH;
+  const h = 30, w = h * aspect;          // top-down: fit the full field
+  camera.left = -w/2; camera.right = w/2;
+  camera.top  =  h/2; camera.bottom = -h/2;
+  camera.position.set(CX, 80, CZ);       // straight overhead
+  camera.up.set(0, 0, -1);               // north points up the screen
+  camera.lookAt(CX, 0, CZ);
+  camera.updateProjectionMatrix();
+}
+frameCamera();
+
+// Keep world sized to the area right of the sidebar on resize
+window.addEventListener('resize', () => {
+  CW = window.innerWidth - SIDEBAR_W; CH = window.innerHeight;
+  renderer.setSize(CW, CH);
+  frameCamera();
+});
+
+// ─────────────────────────────────────────────
+//  LIGHTING
+//  Key  — from the iso "sun" corner (same quadrant as camera)
+//  Fill — opposite corner, cool blue
+//  Ambient — mid-grey, keeps shadow areas readable
+// ─────────────────────────────────────────────
+scene.add(new THREE.AmbientLight(0xc8d8f0, 2.8));
+
+const sun = new THREE.DirectionalLight(0xfff8e8, 3.8);
+sun.position.set(CX + 20, 30, CZ - 15);
+sun.target.position.set(CX, 0, CZ);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left   = -30; sun.shadow.camera.right  = 30;
+sun.shadow.camera.top    =  30; sun.shadow.camera.bottom = -30;
+sun.shadow.camera.near   = 0.5; sun.shadow.camera.far    = 100;
+sun.shadow.bias = -0.001;
+scene.add(sun); scene.add(sun.target);
+
+const fill = new THREE.DirectionalLight(0x6699cc, 1.4);
+fill.position.set(CX - 15, 20, CZ + 20);
+scene.add(fill);
+
+// ─────────────────────────────────────────────
+//  ROAD NETWORK  (band-based, 2 tiles wide = 2 lanes)
+//  Two tiers of streets so the whole field is navigable with MANY routes:
+//    • Arterials (2 lanes wide, paired cols/rows) — main roads
+//        V: cols [0,1] [6,7] [12,13]   H: rows [0,1] [6,7] [12,13]
+//    • Interior alleys (1 lane) cut THROUGH every block so cars can drive
+//        between buildings:  cols {4,9}   rows {4,9}
+//  Buildings are NOT solid blocks — they sit as scattered obstacles in the
+//  small sub-areas left between all these streets, leaving open pathways.
+// ─────────────────────────────────────────────
+const ART_COLS  = new Set([0,1, 6,7, 12,13]); // arterial road columns (2-lane)
+const ART_ROWS  = new Set([0,1, 6,7, 12,13]); // arterial road rows
+const ALLEY_COLS= new Set([4, 9]);            // interior 1-lane streets (vertical)
+const ALLEY_ROWS= new Set([4, 9]);            // interior 1-lane streets (horizontal)
+const LEFT_COLS = new Set([0,6,12]);          // left lane of each arterial corridor
+const TOP_ROWS  = new Set([0,6,12]);          // top  lane of each arterial corridor
+
+const isArtV  = c => ART_COLS.has(c);
+const isArtH  = r => ART_ROWS.has(r);
+const isVertRoad  = (c) => ART_COLS.has(c) || ALLEY_COLS.has(c);
+const isHorizRoad = (r) => ART_ROWS.has(r) || ALLEY_ROWS.has(r);
+const isRoad  = (c,r) => isVertRoad(c) || isHorizRoad(r);
+const inBounds = (c,r) => c>=0 && c<COLS && r>=0 && r<ROWS;
+
+function tilePos(col, row, y=0) {
+  return new THREE.Vector3(col * TS, y, row * TS);
+}
+
+// ─────────────────────────────────────────────
+//  ASSET LOADER
+// ─────────────────────────────────────────────
+const loader = new GLTFLoader();
+const ROAD_PATH = 'assets/kenney_city-kit-roads/Models/GLB%20format/';
+const CAR_PATH  = 'assets/kenney_car-kit/Models/GLB%20format/';
+const IND_PATH  = 'assets/kenney_city-kit-industrial_1.0/Models/GLB%20format/';
+const BLAST_PATH= 'assets/kenney_blaster-kit_2.1/Models/GLB%20format/';
+const TREE_PATH = 'assets/kenney_tower-defense-kit/Models/GLB%20format/';
+
+let loadedCount = 0, totalCount = 0;
+const pbar = document.getElementById('pbar');
+function onAssetLoaded() { pbar.style.width = Math.round(++loadedCount / totalCount * 100) + '%'; }
+
+function loadGLB(url) {
+  return new Promise((resolve, reject) => {
+    loader.load(url,
+      gltf => {
+        gltf.scene.traverse(n => { if (n.isMesh) { n.castShadow = true; n.receiveShadow = true; } });
+        resolve(gltf.scene);
+      },
+      undefined, reject
+    );
+  });
+}
+
+// ─────────────────────────────────────────────
+//  BUILD SCENE
+// ─────────────────────────────────────────────
+let baseMarker = null;   // floating objective chevron (bobbed in animate)
+
+async function buildScene() {
+
+  // ── Asset manifest ──────────────────────────
+  const manifest = {
+    // Road base
+    'tile-low':              ROAD_PATH + 'tile-low.glb',
+    'light-square':          ROAD_PATH + 'light-square.glb',
+    // Industrial buildings (reduced footprint, mounted via GLB)
+    'building-a':            IND_PATH  + 'building-a.glb',
+    'building-b':            IND_PATH  + 'building-b.glb',
+    'building-c':            IND_PATH  + 'building-c.glb',
+    'building-d':            IND_PATH  + 'building-d.glb',
+    'building-e':            IND_PATH  + 'building-e.glb',
+    'building-f':            IND_PATH  + 'building-f.glb',
+    'building-g':            IND_PATH  + 'building-g.glb',
+    'building-h':            IND_PATH  + 'building-h.glb',
+    'building-i':            IND_PATH  + 'building-i.glb',
+    'building-k':            IND_PATH  + 'building-k.glb',
+    'building-m':            IND_PATH  + 'building-m.glb',
+    'building-n':            IND_PATH  + 'building-n.glb',
+    'chimney-small':         IND_PATH  + 'chimney-small.glb',
+    'chimney-medium':        IND_PATH  + 'chimney-medium.glb',
+    // Trees & rocks (terrain dressing)
+    'tree':                  TREE_PATH + 'detail-tree.glb',
+    'tree-large':            TREE_PATH + 'detail-tree-large.glb',
+    'rocks':                 TREE_PATH + 'detail-rocks.glb',
+    'rocks-large':           TREE_PATH + 'detail-rocks-large.glb',
+    'tile-rock':             TREE_PATH + 'tile-rock.glb',
+    // Base / objective beacon
+    'crystal':               TREE_PATH + 'detail-crystal-large.glb',
+    // Blaster weapons (roof-mounted on cars)
+    'blaster-c':             BLAST_PATH+ 'blaster-c.glb',
+    'blaster-h':             BLAST_PATH+ 'blaster-h.glb',
+    'blaster-l':             BLAST_PATH+ 'blaster-l.glb',
+    // Enemy cars
+    'police':                CAR_PATH  + 'police.glb',
+    'suv':                   CAR_PATH  + 'suv.glb',
+    'taxi':                  CAR_PATH  + 'taxi.glb',
+    'hatchback-sports':      CAR_PATH  + 'hatchback-sports.glb',
+    'sedan-sports':          CAR_PATH  + 'sedan-sports.glb',
+    'van':                   CAR_PATH  + 'van.glb',
+    'delivery':              CAR_PATH  + 'delivery.glb',
+    // Player
+    'race-future':           CAR_PATH  + 'race-future.glb',
+  };
+
+  totalCount = Object.keys(manifest).length;
+
+  // Load everything in parallel — skip failures gracefully
+  const M = {};
+  await Promise.all(
+    Object.entries(manifest).map(async ([key, url]) => {
+      try   { M[key] = await loadGLB(url); }
+      catch { console.warn('Asset missing:', key); }
+      onAssetLoaded();
+    })
+  );
+
+  // ── Helpers ────────────────────────────────
+  const tmpBox = new THREE.Box3(), tmpSize = new THREE.Vector3();
+  function measure(obj) { tmpBox.setFromObject(obj); tmpBox.getSize(tmpSize); return { box: tmpBox.clone(), size: tmpSize.clone() }; }
+
+  // Clone a GLB, scale so its footprint (max of x/z) == targetFoot, and
+  // drop it so its base sits on the ground at (x,z).
+  function mountModel(key, x, z, targetFoot, rotY = 0, yScale = 1) {
+    if (!M[key]) return null;
+    const obj = M[key].clone(true);
+    obj.rotation.y = rotY;
+    const m = measure(obj);
+    const foot = Math.max(m.size.x, m.size.z) || 1;
+    const s = targetFoot / foot;
+    obj.scale.set(s, s * yScale, s);          // yScale stretches/squashes height only
+    const m2 = measure(obj);
+    obj.position.set(x, -m2.box.min.y, z);    // base on ground
+    scene.add(obj);
+    return obj;
+  }
+
+  // A flat marking strip on the road surface
+  function addStrip(x, z, w, d, color, opacity) {
+    const m = new THREE.Mesh(
+      new THREE.PlaneGeometry(w, d),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity })
+    );
+    m.rotation.x = -Math.PI / 2;
+    m.position.set(x, 0.05, z);
+    scene.add(m);
+    return m;
+  }
+
+  // Dashed line between (x1,z1)→(x2,z2) — segments of length `dash`
+  function addDashed(x1, z1, x2, z2, dash, gap, w, color, opacity) {
+    const dx = x2 - x1, dz = z2 - z1;
+    const len = Math.hypot(dx, dz);
+    const ux = dx / len, uz = dz / len;
+    const step = dash + gap;
+    for (let s = 0; s + dash <= len; s += step) {
+      const cx = x1 + ux * (s + dash / 2);
+      const cz = z1 + uz * (s + dash / 2);
+      const horiz = Math.abs(ux) > Math.abs(uz);
+      addStrip(cx, cz, horiz ? dash : w, horiz ? w : dash, color, opacity);
+    }
+  }
+
+  // ── GROUND PLANE ─────────────────────────────────────────
+  // Oversized terrain so the ground projects past every canvas edge/corner —
+  // guarantees no black areas regardless of zoom or the diamond's tips.
+  {
+    const grass = new THREE.Mesh(
+      new THREE.PlaneGeometry(220, 220),
+      new THREE.MeshStandardMaterial({ color: 0x223524, roughness: 1, metalness: 0 })
+    );
+    grass.rotation.x = -Math.PI / 2;
+    grass.position.set(CX, 0, CZ);
+    grass.receiveShadow = true;
+    scene.add(grass);
+  }
+
+  // ── BASE PLAZA (square) ──────────────────────────────────
+  // Open SQUARE paved arena around the objective so the player can circle it
+  // and defend from any side. Buildings/terrain are kept out of this area.
+  const BASE   = { x: CX, z: (ROWS - 3) * TS };   // bottom-centre, one row up so the road behind stays drivable
+  const PLAZA_H = 7.0;                          // half-extent of the square arena
+  const inPlaza = (x, z) => Math.max(Math.abs(x - BASE.x), Math.abs(z - BASE.z)) < PLAZA_H + 0.4;
+  {
+    const disc = new THREE.Mesh(
+      new THREE.PlaneGeometry(PLAZA_H * 2, PLAZA_H * 2),
+      new THREE.MeshStandardMaterial({ color: 0x363b44, roughness: 0.95, metalness: 0 })
+    );
+    disc.rotation.x = -Math.PI / 2; disc.position.set(BASE.x, 0.016, BASE.z);
+    disc.receiveShadow = true; scene.add(disc);
+    const lineMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35 });
+    const S = PLAZA_H * 2, T = 0.12;
+    [[0,-PLAZA_H,S,T],[0,PLAZA_H,S,T],[-PLAZA_H,0,T,S],[PLAZA_H,0,T,S]].forEach(([dx,dz,w,d]) => {
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), lineMat);
+      m.rotation.x = -Math.PI / 2; m.position.set(BASE.x + dx, 0.05, BASE.z + dz); scene.add(m);
+    });
+  }
+
+  // ── ROAD SURFACE + LANE MARKINGS ─────────────────────────
+  const ASPHALT = 0x2c3038;
+  for (let row = 0; row < ROWS; row++) {
+    for (let col = 0; col < COLS; col++) {
+      if (!isRoad(col, row)) continue;
+      const cx = col * TS, cz = row * TS;
+      const surf = new THREE.Mesh(
+        new THREE.PlaneGeometry(TS, TS),
+        new THREE.MeshStandardMaterial({ color: ASPHALT, roughness: 0.95, metalness: 0 })
+      );
+      surf.rotation.x = -Math.PI / 2;
+      surf.position.set(cx, 0.02, cz);
+      surf.receiveShadow = true;
+      scene.add(surf);
+
+      const vert  = isVertRoad(col);
+      const horiz = isHorizRoad(row);
+      if (vert && horiz) continue;
+
+      if (vert) {
+        if (isArtV(col)) {
+          const left = LEFT_COLS.has(col);
+          addStrip(cx + (left ? -TS/2 : TS/2), cz, 0.07, TS, 0xffffff, 0.7);
+          if (left) addDashed(cx + TS/2, cz - TS/2, cx + TS/2, cz + TS/2, 0.55, 0.45, 0.09, 0xffd24a, 0.85);
+        } else {
+          addDashed(cx, cz - TS/2, cx, cz + TS/2, 0.4, 0.5, 0.07, 0xffffff, 0.4);
+        }
+      } else if (horiz) {
+        if (isArtH(row)) {
+          const top = TOP_ROWS.has(row);
+          addStrip(cx, cz + (top ? -TS/2 : TS/2), TS, 0.07, 0xffffff, 0.7);
+          if (top) addDashed(cx - TS/2, cz + TS/2, cx + TS/2, cz + TS/2, 0.55, 0.45, 0.09, 0xffd24a, 0.85);
+        } else {
+          addDashed(cx - TS/2, cz, cx + TS/2, cz, 0.4, 0.5, 0.07, 0xffffff, 0.4);
+        }
+      }
+    }
+  }
+
+  // ── CITY BLOCKS — PATTERNED (Battle City style) ──────────
+  const BUILDINGS = ['building-a','building-b','building-c','building-d','building-e',
+                     'building-f','building-g','building-h','building-i','building-k',
+                     'building-m','building-n'];
+
+  let hash = 7;
+  const rnd = () => { hash = (hash * 1103515245 + 12345) & 0x7fffffff; return hash / 0x7fffffff; };
+
+  const bandOf = i => (i <= 3 ? 0 : i === 5 ? 1 : i === 8 ? 2 : 3);
+  const faceRoad = (col, row) =>
+    isRoad(col, row-1) ? 0 :
+    isRoad(col, row+1) ? Math.PI :
+    isRoad(col+1, row) ? Math.PI/2 :
+    isRoad(col-1, row) ? -Math.PI/2 : 0;
+
+  const BLD_YSCALE = 1.35;   // buildings stretched taller (matches mock preview)
+
+  // Destructible-building bookkeeping (2 hits to collapse → tile becomes passable)
+  PR.buildingHP = new Map();      // "c,r" → hp
+  PR.buildingMeshes = new Map();  // "c,r" → [meshes to remove on collapse]
+  PR.cleared = new Set();         // "c,r" tiles cleared by collapse
+  PR.trees = new Set();           // tree tiles (block bolts, not destructible)
+
+  for (let row = 0; row < ROWS; row++) {
+    for (let col = 0; col < COLS; col++) {
+      if (isRoad(col, row)) continue;
+      const x = col * TS, z = row * TS;
+      if (inPlaza(x, z)) continue;
+
+      const cb = bandOf(col), rb = bandOf(row);
+      // Mock pattern: dense buildings everywhere, tree groves scattered ~1 in 5
+      const treeCell = (((col * 3 + row) % 5) === 0);
+
+      if (!treeCell) {
+        // Tall building, one per cell, facing the street — destructible
+        const key = BUILDINGS[(cb * 4 + rb) % BUILDINGS.length];
+        const meshes = [];
+        const b = mountModel(key, x, z, 1.5, faceRoad(col, row), BLD_YSCALE);
+        if (b) meshes.push(b);
+        if (((col + row) % 2) === 0) {
+          const ch = mountModel((col % 2) ? 'chimney-small' : 'chimney-medium', x + 0.5, z + 0.5, 0.45, 0);
+          if (ch) meshes.push(ch);
+        }
+        PR.buildingHP.set(col + ',' + row, 2);
+        PR.buildingMeshes.set(col + ',' + row, meshes);
+      } else {
+        PR.trees.add(col + ',' + row);
+        const tall = ((col + row) % 2) === 0;
+        mountModel(tall ? 'tree-large' : 'tree', x, z, tall ? 1.5 : 1.1, ((col * 3 + row) % 4) * (Math.PI / 2));
+        mountModel('tree', x - 0.55, z - 0.55, 0.55, 0);
+        mountModel('tree', x + 0.55, z + 0.55, 0.55, 0);
+      }
+    }
+  }
+
+  // ── STREET LIGHTS at major intersection corners ──────────
+  [[5.5,5.5],[5.5,11.5],[11.5,5.5],[11.5,11.5],[5.5,0.5],[0.5,5.5]].forEach(([gc,gr]) => {
+    mountModel('light-square', gc * TS, gr * TS, 0.6, (gc + gr));
+  });
+
+  // ── BARRICADES at the off-map road mouths ────────────────
+  // Each arterial that would continue into the non-drivable outskirts gets a
+  // striped barrier across its mouth at the playfield edge.
+  function barricade(x, z, horizontal) {
+    const w = horizontal ? TS * 0.92 : 0.34;
+    const d = horizontal ? 0.34 : TS * 0.92;
+    const block = new THREE.Mesh(
+      new THREE.BoxGeometry(w, 0.46, d),
+      new THREE.MeshStandardMaterial({ color: 0x3c4048, roughness: 0.9 })
+    );
+    block.position.set(x, 0.23, z); block.castShadow = true; block.receiveShadow = true;
+    scene.add(block);
+    const stripe = new THREE.Mesh(
+      new THREE.BoxGeometry(w + 0.02, 0.08, d + 0.02),
+      new THREE.MeshBasicMaterial({ color: 0xff7a1a })
+    );
+    stripe.position.set(x, 0.44, z); scene.add(stripe);
+  }
+  const edge = (COLS - 1) * TS;   // 26
+  ART_COLS.forEach(c => {                       // vertical arterials → top & bottom mouths
+    barricade(c * TS, -TS * 0.55, true);
+    barricade(c * TS, edge + TS * 0.55, true);
+  });
+  ART_ROWS.forEach(r => {                       // horizontal arterials → left & right mouths
+    barricade(-TS * 0.55, r * TS, false);
+    barricade(edge + TS * 0.55, r * TS, false);
+  });
+
+  // ── OUTSKIRTS: fading, NON-PLAYABLE road network + greenery ──
+  {
+    const cxC = CX, czC = CZ;
+    const HALF = (COLS - 1) / 2;
+    const REACH = 13;
+    const LO = -REACH, HI = (COLS - 1) + REACH;
+
+    const grassCol = new THREE.Color(0x223524);
+    const roadCol  = new THREE.Color(0x2a2f37);
+
+    const isArterial = i => { const m = ((i % 6) + 6) % 6; return m === 0 || m === 1; };
+    const inPlay = (c, r) => c >= 0 && c <= COLS - 1 && r >= 0 && r <= ROWS - 1;
+
+    for (let c = LO; c <= HI; c++) {
+      for (let r = LO; r <= HI; r++) {
+        if (inPlay(c, r)) continue;
+        const x = c * TS, z = r * TS;
+        if (inPlaza(x, z)) continue;
+
+        const distTiles = Math.max(Math.abs(c - HALF), Math.abs(r - HALF));
+        const t = Math.min(1, Math.max(0, (distTiles - HALF) / REACH));
+
+        const onRoad = isArterial(c) || isArterial(r);
+
+        if (onRoad) {
+          const breakProb = 0.10 + t * 0.85;
+          if (rnd() > breakProb) {
+            const col = roadCol.clone().lerp(grassCol, 0.30 + t * 0.55);
+            const s = new THREE.Mesh(
+              new THREE.PlaneGeometry(TS, TS),
+              new THREE.MeshStandardMaterial({ color: col, roughness: 1, metalness: 0 })
+            );
+            s.rotation.x = -Math.PI / 2; s.position.set(x, 0.015, z); s.receiveShadow = true;
+            scene.add(s);
+            if (t < 0.35 && isArterial(c) && (((c % 6) + 6) % 6) === 0) {
+              addDashed(x + TS/2, z - TS/2, x + TS/2, z + TS/2, 0.4, 0.6, 0.07, 0x6a7c8a, 0.25 * (1 - t));
+            }
+          } else {
+            if (rnd() < 0.35) {
+              const k = rnd();
+              mountModel(k < 0.5 ? 'rocks' : 'tree', x + (rnd()-0.5), z + (rnd()-0.5),
+                         k < 0.5 ? 0.8 : 0.7, rnd() * Math.PI * 2);
+            }
+          }
+        } else {
+          const vegProb = 0.62 * (1 - t * 0.75);
+          if (rnd() < vegProb) {
+            const x2 = x + (rnd() - 0.5) * 1.4, z2 = z + (rnd() - 0.5) * 1.4;
+            const pick = rnd();
+            if (pick < 0.55) {
+              const big = rnd() < 0.35;
+              mountModel(big ? 'tree-large' : 'tree', x2, z2, big ? 1.5 : 1.05, rnd() * Math.PI * 2);
+            } else if (pick < 0.78) {
+              mountModel('tree', x2, z2, 0.55 + rnd() * 0.3, rnd() * Math.PI * 2);
+            } else {
+              const k = rnd();
+              const key = k < 0.45 ? 'tile-rock' : (k < 0.75 ? 'rocks' : 'rocks-large');
+              mountModel(key, x2, z2, 0.8 + rnd() * 0.8, rnd() * Math.PI * 2);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // ─────────────────────────────────────────────
+  //  CARS  (1 player + enemies), each with a roof-mounted blaster
+  // ─────────────────────────────────────────────
+  const CAR_YSCALE = 0.62;   // cars squashed flatter (shorter than buildings)
+  const CAR_SCALE  = 0.72;   // overall car size (smaller — fits the lanes better)
+  function makeCar(carKey, blasterKey, x, z, headingRad, accent, carTint) {
+    const group = new THREE.Group();
+    if (M[carKey]) {
+      const car = M[carKey].clone(true);
+      car.scale.set(CAR_SCALE, CAR_SCALE * CAR_YSCALE, CAR_SCALE);   // smaller + flatter
+      const m = measure(car);
+      car.position.y = -m.box.min.y;
+      if (carTint !== undefined) {            // bright player body
+        const tc = new THREE.Color(carTint);
+        car.traverse(n => { if (n.isMesh) {
+          n.material = n.material.clone();
+          n.material.color = tc.clone();
+          n.material.emissive = tc.clone();
+          n.material.emissiveIntensity = 0.45;
+        }});
+      }
+      group.add(car);
+      if (M[blasterKey]) {
+        const b = M[blasterKey].clone(true);
+        const bm = measure(b);
+        const blen = Math.max(bm.size.x, bm.size.z) || 1;
+        b.scale.setScalar(1.5 / blen);
+        b.position.set(0, m.size.y * 0.9, 0);  // sit on the (now lower) roof
+        b.rotation.y = Math.PI;
+        group.add(b);
+      }
+    }
+    // subtle glow light travels with the car (no ground ring)
+    const glow = new THREE.PointLight(accent, 2, 3.5);
+    glow.position.set(0, 0.4, 0);
+    group.add(glow);
+
+    group.position.set(x, 0, z);
+    group.rotation.y = headingRad;
+    scene.add(group);
+    return group;
+  }
+
+  const C = (col) => col * TS;
+  const R = (row) => row * TS;
+
+  // PLAYER — bright car. Start on the road lane right BESIDE the objective
+  // (col 9 alley, objective's row), lane-aligned so the first move doesn't snap.
+  const startX = 9 * TS, startZ = (ROWS - 3) * TS;   // beside the objective, on the road
+  faceX = 0; faceZ = -1;                          // aim north toward incoming enemies
+  playerYaw = playerYawCur = Math.atan2(faceX, faceZ) + YAW_OFFSET;
+  player = makeCar('race-future', 'blaster-c', startX, startZ, playerYaw, 0xffe000, 0xffe000);
+  playerX = startX; playerZ = startZ;
+  PR.start = { x: startX, z: startZ };           // respawn point
+  // Shield dome (toggled while the Shield power-up is active)
+  shieldMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(1.05, 18, 12),
+    new THREE.MeshBasicMaterial({ color: 0x00e0ff, transparent: true, opacity: 0.22, side: THREE.DoubleSide })
+  );
+  shieldMesh.position.y = 0.5; shieldMesh.visible = false;
+  player.add(shieldMesh);
+
+  // ── expose refs the gameplay code (in animate) needs ──
+  PR.base = { x: BASE.x, z: BASE.z };
+  PR.plazaH = PLAZA_H;
+  PR.ring = 2.6;                       // objective wall half-extent
+  spawnCar = makeCar;                  // let the enemy system build cars at runtime
+
+  // ── Central junction BUNKERS — buildings at the middle crossroads that
+  //    block direct enemy fire to the objective and funnel attackers around.
+  PR.bunkers = new Set(['6,7', '7,7', '6,8', '7,8']);
+  PR.bunkers.forEach(key => {
+    const [c, r] = key.split(',').map(Number);
+    const b = mountModel('building-c', c * TS, r * TS, 1.5, 0, 1.35);
+    PR.buildingHP.set(key, 2);                  // bunkers are destructible too
+    PR.buildingMeshes.set(key, b ? [b] : []);
+  });
+
+  // ── Flow field: BFS distance-to-objective over drivable tiles ──
+  PR.tileOK = (c, r) => {
+    if (c < 0 || c >= COLS || r < 0 || r >= ROWS) return false;
+    if (PR.cleared.has(c + ',' + r)) return true;         // collapsed building → passable
+    if (PR.bunkers.has(c + ',' + r)) return false;        // central bunkers are solid
+    const x = c * TS, z = r * TS;
+    const cheby = Math.max(Math.abs(x - BASE.x), Math.abs(z - BASE.z));
+    if (cheby <= PR.ring + 0.6) return false;             // wall / core
+    return isRoad(c, r) || cheby < PLAZA_H;               // road or plaza
+  };
+  {
+    const dist = Array.from({ length: COLS }, () => Array(ROWS).fill(Infinity));
+    const q = [];
+    for (let c = 0; c < COLS; c++) for (let r = 0; r < ROWS; r++) {
+      if (!PR.tileOK(c, r)) continue;
+      const front = [[1,0],[-1,0],[0,1],[0,-1]].some(([dc,dr]) => {
+        const nc = c+dc, nr = r+dr;
+        if (nc<0||nc>=COLS||nr<0||nr>=ROWS) return false;
+        const x = nc*TS, z = nr*TS;
+        return Math.max(Math.abs(x-BASE.x), Math.abs(z-BASE.z)) <= PR.ring + 0.6;
+      });
+      if (front) { dist[c][r] = 0; q.push([c, r]); }
+    }
+    let head = 0;
+    while (head < q.length) {
+      const [c, r] = q[head++];
+      [[1,0],[-1,0],[0,1],[0,-1]].forEach(([dc,dr]) => {
+        const nc = c+dc, nr = r+dr;
+        if (PR.tileOK(nc,nr) && dist[nc][nr] > dist[c][r] + 1) { dist[nc][nr] = dist[c][r]+1; q.push([nc,nr]); }
+      });
+    }
+    PR.dist = dist;
+  }
+  // Enemy spawn points — edge road tiles (top + upper sides), inside the field
+  PR.spawns = [[0,0],[13,0]].filter(([c,r]) => PR.tileOK(c,r));   // top corners only
+
+  // ─────────────────────────────────────────────
+  //  BASE / OBJECTIVE (square wall — full closed border, bottom centre)
+  // ─────────────────────────────────────────────
+  {
+    const bx = BASE.x, bz = BASE.z;
+
+    const plinth = new THREE.Mesh(
+      new THREE.CylinderGeometry(1.5, 1.7, 0.4, 32),
+      new THREE.MeshStandardMaterial({ color: 0x161b24, roughness: 0.6, metalness: 0.4 })
+    );
+    plinth.position.set(bx, 0.2, bz); plinth.castShadow = true; plinth.receiveShadow = true;
+    scene.add(plinth);
+
+    const core = mountModel('crystal', bx, bz, 1.6, 0);
+    if (core) {
+      core.position.y += 0.4;
+      core.traverse(n => { if (n.isMesh) {
+        n.material = n.material.clone();
+        n.material.emissive = new THREE.Color(0x33ff99);
+        n.material.emissiveIntensity = 1.6;
+      }});
+    } else {
+      const e = new THREE.Mesh(
+        new THREE.OctahedronGeometry(0.9),
+        new THREE.MeshStandardMaterial({ color: 0x0c3a24, emissive: 0x33ff99, emissiveIntensity: 1.6 })
+      );
+      e.position.set(bx, 1.3, bz); scene.add(e);
+    }
+
+    // Square target marker (two concentric square outlines, not circular)
+    [[1.75, 0x33ff99, 0.8], [1.25, 0xffcc33, 0.55]].forEach(([h, col, op]) => {
+      const mat = new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: op });
+      const T = 0.1, S = h * 2;
+      [[0,-h,S,T],[0,h,S,T],[-h,0,T,S],[h,0,T,S]].forEach(([dx,dz,w,d]) => {
+        const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), mat);
+        m.rotation.x = -Math.PI / 2; m.position.set(bx + dx, 0.06, bz + dz); scene.add(m);
+      });
+    });
+
+    const barMat = new THREE.MeshStandardMaterial({ color: 0x5a5d63, roughness: 0.85, metalness: 0.1 });
+    const stripeMat = new THREE.MeshBasicMaterial({ color: 0x494c52 });
+    const RING = 2.6;
+    const STEP = 0.9;
+    PR.coreR = 1.3;   // bolt within this Chebyshev radius of centre = core hit
+    const placeBar = (x, z, rotY) => {
+      const block = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.5, 0.45), barMat);
+      block.position.set(x, 0.25, z); block.rotation.y = rotY; block.castShadow = true;
+      scene.add(block);
+      const st = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.07, 0.47), stripeMat);
+      st.position.set(x, 0.47, z); st.rotation.y = rotY; scene.add(st);
+      walls.push({ block, stripe: st, x, z, hp: 2 });   // 2 hits to break
+    };
+    // Full closed border — all four sides walled
+    for (let o = -RING; o <= RING + 0.001; o += STEP) {
+      placeBar(bx + o, bz + RING, 0);            // south wall
+      placeBar(bx + o, bz - RING, 0);            // north wall (now closed)
+      placeBar(bx - RING, bz + o, Math.PI / 2);  // west wall
+      placeBar(bx + RING, bz + o, Math.PI / 2);  // east wall
+    }
+
+    const beacon = new THREE.PointLight(0x33ff99, 6, 9);
+    beacon.position.set(bx, 2.6, bz); scene.add(beacon);
+
+    // Steel shield walls — translucent blue box around the objective (toggled by Steel power-up)
+    steelMesh = new THREE.Group();
+    const steelMat = new THREE.MeshBasicMaterial({ color: 0x6bd0ff, transparent: true, opacity: 0.28, side: THREE.DoubleSide });
+    const SR = RING + 0.5, SH = 1.4;
+    [[0,-SR,SR*2,0.12],[0,SR,SR*2,0.12],[-SR,0,0.12,SR*2],[SR,0,0.12,SR*2]].forEach(([dx,dz,w,d]) => {
+      const panel = new THREE.Mesh(new THREE.BoxGeometry(w, SH, d), steelMat);
+      panel.position.set(bx + dx, SH/2, bz + dz); steelMesh.add(panel);
+    });
+    steelMesh.visible = false; scene.add(steelMesh);
+
+    baseMarker = new THREE.Group();
+    const chevMat = new THREE.MeshBasicMaterial({ color: 0xffe24a });
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(0.55, 0.9, 4), chevMat);
+    cone.rotation.x = Math.PI;
+    cone.rotation.y = Math.PI / 4;
+    baseMarker.add(cone);
+    baseMarker.position.set(bx, 4.2, bz);
+    scene.add(baseMarker);
+  }
+
+  // ── Hide loader, show start screen ──────────
+  document.getElementById('progress').style.display = 'none';
+  document.getElementById('start').style.display = 'flex';
+}
+
+// ─────────────────────────────────────────────
+//  PLAYER INPUT + MOVEMENT  (8-direction, grid-aligned, road/plaza-bound)
+// ─────────────────────────────────────────────
+let player = null, playerX = 0, playerZ = 0, playerYaw = Math.PI, playerYawCur = Math.PI, playerSpd = 0;
+let faceX = 0, faceZ = 1;            // last travel/aim direction (unit)
+const PR = {};                       // refs populated in buildScene
+const keys = {};
+const PLAYER_SPEED = 0.07;           // world units / frame
+const YAW_OFFSET = Math.PI;          // align car model nose to travel dir
+
+const ARROW = { arrowup: 'up', arrowdown: 'down', arrowleft: 'left', arrowright: 'right' };
+const DIR_VEC = { up: [0,-1], down: [0,1], left: [-1,0], right: [1,0] };
+const dirStack = [];   // arrow keys in press order → newest wins (responsive turning)
+addEventListener('keydown', e => {
+  const k = e.key.toLowerCase();
+  if (ARROW[k]) { const d = ARROW[k]; keys[d] = true; if (!dirStack.includes(d)) dirStack.push(d); e.preventDefault(); }
+  if (k === ' ' || e.code === 'Space') { keys.fire = true; e.preventDefault(); }
+});
+addEventListener('keyup', e => {
+  const k = e.key.toLowerCase();
+  if (ARROW[k]) { const d = ARROW[k]; keys[d] = false; const i = dirStack.indexOf(d); if (i >= 0) dirStack.splice(i, 1); }
+  if (k === ' ' || e.code === 'Space') keys.fire = false;
+});
+
+// Can a car occupy world point (x,z)? Roads + plaza + cleared rubble, minus objective & intact buildings.
+function drivable(x, z) {
+  const c = Math.round(x / TS), r = Math.round(z / TS);
+  if (c < 0 || c >= COLS || r < 0 || r >= ROWS) return false;
+  const key = c + ',' + r;
+  if (PR.cleared && PR.cleared.has(key)) return true;            // collapsed building → driveable path
+  if (PR.bunkers && PR.bunkers.has(key)) return false;           // central bunkers solid
+  const inP = Math.max(Math.abs(x - PR.base.x), Math.abs(z - PR.base.z)) < PR.plazaH;
+  if (!(isRoad(c, r) || inP)) return false;                      // buildings & trees block
+  // block the walled objective (wall ring + interior core)
+  const cheby = Math.max(Math.abs(x - PR.base.x), Math.abs(z - PR.base.z));
+  if (cheby <= PR.ring + 0.6) return false;
+  return true;
+}
+
+const snapLane = v => Math.round(v / TS) * TS;   // align to lane (tile) centre
+
+const ALIGN_STEP = 0.22;   // how fast a car eases onto the lane centre when turning
+
+// Move (cx,cz) one step in cardinal (dx,dz): ease onto the lane, then step forward.
+// Never lands on a blocked tile, so a car can't get snapped/wedged into a wall.
+function gridMove(cx, cz, dx, dz, speed, skipEnemy, dt) {
+  let x = cx, z = cz;
+  const align = ALIGN_STEP * dt;
+  // 1) ease the perpendicular axis toward its lane centre (only if it stays drivable)
+  if (dz !== 0) {
+    const lane = snapLane(x), d = lane - x;
+    const ax = Math.abs(d) <= align ? lane : x + Math.sign(d) * align;
+    if (drivable(ax, z)) x = ax;
+  } else {
+    const lane = snapLane(z), d = lane - z;
+    const az = Math.abs(d) <= align ? lane : z + Math.sign(d) * align;
+    if (drivable(x, az)) z = az;
+  }
+  // 2) step forward if the destination tile is open (and not occupied)
+  const nx = x + dx * speed * dt, nz = z + dz * speed * dt;
+  const tc = Math.round(nx / TS), tr = Math.round(nz / TS);
+  const occupied = skipEnemy ? enemyOnTile(tc, tr, skipEnemy) : false;
+  if (drivable(nx, nz) && !occupied) { x = nx; z = nz; }
+  return [x, z];
+}
+
+function updatePlayer(dt) {
+  if (!player) return;
+  const dir = dirStack.length ? dirStack[dirStack.length - 1] : null;   // newest held arrow
+  if (dir) {
+    const [dx, dz] = DIR_VEC[dir];
+    faceX = dx; faceZ = dz;                       // aim = facing (cardinal, instant)
+    playerYaw = Math.atan2(dx, dz) + YAW_OFFSET;
+    [playerX, playerZ] = gridMove(playerX, playerZ, dx, dz, PLAYER_SPEED, true, dt);
+  }
+  player.position.set(playerX, 0, playerZ);
+  player.rotation.y = playerYaw;                  // instant facing
+}
+
+// ─────────────────────────────────────────────
+//  PROJECTILES (blaster bolts) + 1-for-1 cancel
+// ─────────────────────────────────────────────
+const bolts = [];
+const walls = [];               // damageable objective wall segments {block, stripe, x, z, hp}
+let gameState = 'start';        // 'start' | 'play' | 'win' | 'lose'
+const PLAYER_LIVES = 3;
+let lives = PLAYER_LIVES;
+let lastFire = -999;
+const FIRE_COOLDOWN = 14;       // frames (~0.23s) — unlimited ammo, deliberate cadence
+const BOLT_SPEED = 0.34;        // world units / frame
+const BOLT_LIFE = 90;           // frames before fizzling
+const CANCEL_DIST = 0.5;        // player+enemy bolt within this → both cancel
+const boltGeo = new THREE.BoxGeometry(0.13, 0.13, 0.7);
+const boltMat = {
+  player: new THREE.MeshBasicMaterial({ color: 0xffb43a }),
+  enemy:  new THREE.MeshBasicMaterial({ color: 0xff3322 }),
+};
+
+// Does a building / tree / bunker / map edge stop a bolt here? (objective wall handled separately)
+function blocksBolt(x, z) {
+  const c = Math.round(x / TS), r = Math.round(z / TS);
+  if (c < 0 || c >= COLS || r < 0 || r >= ROWS) return true;            // off map
+  const key = c + ',' + r;
+  if (PR.cleared && PR.cleared.has(key)) return false;                 // collapsed → bolt passes
+  if (PR.bunkers && PR.bunkers.has(key)) return true;                   // central bunkers
+  const cheby = Math.max(Math.abs(x - PR.base.x), Math.abs(z - PR.base.z));
+  const inP = cheby < PR.plazaH;
+  if (isRoad(c, r) || inP) return false;                               // open ground (road/plaza)
+  return true;                                                          // buildings AND trees block
+}
+
+// A bolt hit a building tile → chip it; collapse (clear) after 2 hits
+function damageBuilding(key) {
+  const hp = (PR.buildingHP.get(key) || 0) - 1;
+  PR.buildingHP.set(key, hp);
+  if (hp <= 0) {
+    (PR.buildingMeshes.get(key) || []).forEach(m => scene.remove(m));
+    PR.cleared.add(key);
+    const [c, r] = key.split(',').map(Number);
+    spawnBlast(c * TS, r * TS, 0xb9b2a0, 'big');   // dust/debris burst
+  }
+}
+
+// snap a direction vector to the nearest cardinal (missiles travel straight only)
+function cardinal(dx, dz) {
+  return Math.abs(dx) >= Math.abs(dz) ? [Math.sign(dx) || 1, 0] : [0, Math.sign(dz) || 1];
+}
+
+function spawnBolt(x, z, dx, dz, team) {
+  const mesh = new THREE.Mesh(boltGeo, boltMat[team]);
+  mesh.position.set(x, 0.45, z);
+  mesh.rotation.y = Math.atan2(dx, dz);
+  scene.add(mesh);
+  bolts.push({ mesh, x, z, vx: dx * BOLT_SPEED, vz: dz * BOLT_SPEED, team, life: BOLT_LIFE });
+}
+
+function fireIfReady() {
+  if (!player || !keys.fire) return;
+  // Battle City rule: only ONE player bullet on screen — fire when the last one clears
+  for (const b of bolts) if (!b.dead && b.team === 'player') return;
+  const [dx, dz] = cardinal(faceX, faceZ);     // straight line only
+  spawnBolt(playerX + dx * 0.8, playerZ + dz * 0.8, dx, dz, 'player');
+}
+
+function updateBolts(dt) {
+  for (const b of bolts) {
+    if (b.dead) continue;
+    b.x += b.vx * dt; b.z += b.vz * dt; b.life -= dt;
+    if (b.life <= 0) { b.dead = true; continue; }
+    const c = Math.round(b.x / TS), r = Math.round(b.z / TS), key = c + ',' + r;
+    // hit an intact building → chip it
+    if (PR.buildingHP && PR.buildingHP.has(key) && !PR.cleared.has(key)) {
+      damageBuilding(key); b.dead = true; continue;
+    }
+    if (blocksBolt(b.x, b.z)) { b.dead = true; continue; }
+    b.mesh.position.set(b.x, 0.45, b.z);
+  }
+  // 1-for-1 cancel: any player bolt meeting any enemy bolt → both vanish
+  for (let i = 0; i < bolts.length; i++) {
+    const a = bolts[i]; if (a.dead || a.team !== 'player') continue;
+    for (let j = 0; j < bolts.length; j++) {
+      const e = bolts[j]; if (e.dead || e.team !== 'enemy') continue;
+      if (Math.abs(a.x - e.x) < CANCEL_DIST && Math.abs(a.z - e.z) < CANCEL_DIST) {
+        a.dead = true; e.dead = true; break;
+      }
+    }
+  }
+  // player bolt hits an enemy car → destroy it
+  for (const b of bolts) {
+    if (b.dead || b.team !== 'player') continue;
+    for (const en of enemies) {
+      if (en.dead) continue;
+      if (Math.abs(b.x - en.x) < 0.9 && Math.abs(b.z - en.z) < 0.9) { b.dead = true; hitEnemy(en); break; }
+    }
+  }
+  // enemy bolt hits the player → lose, unless Shield is active (then blocked)
+  const shielded = frame < shieldUntil;
+  for (const b of bolts) {
+    if (b.dead || b.team !== 'enemy') continue;
+    if (Math.abs(b.x - playerX) < 0.8 && Math.abs(b.z - playerZ) < 0.8) {
+      b.dead = true;
+      if (!shielded) losePlayer();
+    }
+  }
+  // objective collision — wall segments take 2 hits; a breach lets bolts reach the core
+  const steelOn = frame < steelUntil;
+  for (const b of bolts) {
+    if (b.dead) continue;
+    const cheby = Math.max(Math.abs(b.x - PR.base.x), Math.abs(b.z - PR.base.z));
+    // Steel power-up: indestructible shield around the objective for its duration
+    if (steelOn && b.team === 'enemy' && cheby <= PR.ring + 0.6) { b.dead = true; continue; }
+    // core hit (only matters once a wall gap exists)
+    if (cheby < PR.coreR) {
+      b.dead = true;
+      if (b.team === 'enemy') loseGame();
+      continue;
+    }
+    // wall segment hit
+    for (const w of walls) {
+      if (w.hp <= 0) continue;
+      if (Math.abs(b.x - w.x) < 0.5 && Math.abs(b.z - w.z) < 0.5) {
+        b.dead = true;
+        if (b.team === 'enemy') { w.hp--; if (w.hp <= 0) breakWall(w); else damageWall(w); }
+        break;
+      }
+    }
+  }
+  // sweep dead bolts
+  for (let i = bolts.length - 1; i >= 0; i--) {
+    if (bolts[i].dead) { scene.remove(bolts[i].mesh); bolts.splice(i, 1); }
+  }
+}
+
+// ── BLAST / EXPLOSION effects ────────────────────────────
+const effects = [];
+function spawnBlast(x, z, color = 0xffaa33, size = 'big') {
+  const n = size === 'big' ? 12 : 6;
+  const g = new THREE.Group();
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.25, 0.6, 20),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95, side: THREE.DoubleSide })
+  );
+  ring.rotation.x = -Math.PI / 2; ring.position.set(x, 0.3, z); g.add(ring);
+  const flash = new THREE.Mesh(
+    new THREE.SphereGeometry(0.5, 10, 8),
+    new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 })
+  );
+  flash.position.set(x, 0.4, z); g.add(flash);
+  const parts = [];
+  for (let i = 0; i < n; i++) {
+    const p = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.2),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 1 }));
+    const a = Math.random() * Math.PI * 2, sp = 0.06 + Math.random() * 0.13;
+    p.position.set(x, 0.4, z);
+    p.userData = { vx: Math.cos(a) * sp, vz: Math.sin(a) * sp, vy: 0.1 + Math.random() * 0.12 };
+    g.add(p); parts.push(p);
+  }
+  scene.add(g);
+  effects.push({ g, ring, flash, parts, t: 0, life: size === 'big' ? 30 : 18 });
+}
+function updateEffects(dt) {
+  for (let i = effects.length - 1; i >= 0; i--) {
+    const e = effects[i]; e.t += dt;
+    const k = e.t / e.life;
+    e.ring.scale.setScalar(1 + e.t * 0.45); e.ring.material.opacity = Math.max(0, 0.95 * (1 - k));
+    e.flash.scale.setScalar(1 + e.t * 0.15); e.flash.material.opacity = Math.max(0, 0.9 * (1 - k * 2));
+    e.parts.forEach(p => {
+      p.position.x += p.userData.vx * dt; p.position.z += p.userData.vz * dt;
+      p.userData.vy -= 0.013 * dt; p.position.y = Math.max(0.06, p.position.y + p.userData.vy * dt);
+      p.material.opacity = Math.max(0, 1 - k);
+    });
+    if (e.t >= e.life) { scene.remove(e.g); effects.splice(i, 1); }
+  }
+}
+
+// ── Collision: one car per tile (tile-based → no radius deadlocks) ──
+function enemyOnTile(tc, tr, exclude) {
+  for (const en of enemies) {
+    if (en.dead || en === exclude) continue;
+    if (Math.round(en.x / TS) === tc && Math.round(en.z / TS) === tr) return true;
+  }
+  return false;
+}
+function playerOnTile(tc, tr) {
+  return player && Math.round(playerX / TS) === tc && Math.round(playerZ / TS) === tr;
+}
+
+function damageWall(w) {                 // 1 hit taken — show cracked/darker
+  w.block.material = new THREE.MeshStandardMaterial({ color: 0x3a3d42, roughness: 0.95 });
+}
+function breakWall(w) {                   // destroyed — remove segment, opening a breach
+  scene.remove(w.block); scene.remove(w.stripe);
+}
+
+// ─────────────────────────────────────────────
+//  ENEMIES — spawn at edges, flow-field path to objective, shoot
+// ─────────────────────────────────────────────
+let spawnCar = null;
+const enemies = [];
+const ENEMY_BLASTERS = ['blaster-h','blaster-l','blaster-c'];
+// Battle City–style enemy roster (all slower than the player's 0.07)
+const ENEMY_TYPES = [
+  { key:'basic', model:'suv',              hp:1, speed:0.050, fire:130, color:0xff2a2a },
+  { key:'fast',  model:'hatchback-sports', hp:1, speed:0.050, fire:130, color:0xffa030 },
+  { key:'power', model:'sedan-sports',     hp:1, speed:0.050, fire:62,  color:0xff3df0 },
+  { key:'armor', model:'van',              hp:3, speed:0.050, fire:110, color:0xff2a2a },
+];
+const TYPE_SEQUENCE = ['basic','fast','basic','power','armor','fast'];   // spawn order per wave
+const WAVE_TOTAL = 20;       // 20 enemies must be cleared to win
+const MAX_ALIVE = 5;
+const SPAWN_INTERVAL = 110;  // frames between spawns
+let spawnedCount = 0, killedCount = 0, lastSpawn = 0, spawnIdx = 0;
+let mmGridEl = null;
+
+// next step direction toward the objective from tile (c,r) using the flow field
+function nextDir(c, r) {
+  if (!PR.dist) return null;
+  const here = (PR.dist[c] && PR.dist[c][r] != null) ? PR.dist[c][r] : Infinity;
+  let best = null, bestD = here;
+  [[1,0],[-1,0],[0,1],[0,-1]].forEach(([dc,dr]) => {
+    const nc = c+dc, nr = r+dr;
+    if (PR.tileOK && PR.tileOK(nc,nr) && PR.dist[nc][nr] < bestD) { bestD = PR.dist[nc][nr]; best = {dc,dr}; }
+  });
+  return best;
+}
+
+// Roaming: wander the streets (prefer straight, turn at junctions, avoid backtracking)
+function roamDir(c, r, en) {
+  const dirs = [[1,0],[-1,0],[0,1],[0,-1]].filter(([dc,dr]) => PR.tileOK && PR.tileOK(c+dc, r+dr));
+  if (!dirs.length) return null;
+  const rev = en.dir ? [-en.dir.dc, -en.dir.dr] : null;
+  const fwd = dirs.filter(([dc,dr]) => !(rev && dc === rev[0] && dr === rev[1]));
+  const pool = fwd.length ? fwd : dirs;                 // allow reverse only at dead-ends
+  // keep going straight most of the time; otherwise pick a random open turn
+  if (en.dir && Math.random() < 0.7 && pool.some(([dc,dr]) => dc === en.dir.dc && dr === en.dir.dr))
+    return { dc: en.dir.dc, dr: en.dir.dr };
+  const [dc, dr] = pool[Math.floor(Math.random() * pool.length)];
+  return { dc, dr };
+}
+
+function spawnEnemy() {
+  if (!spawnCar || !PR.spawns || !PR.spawns.length) return;
+  const [c, r] = PR.spawns[spawnIdx % PR.spawns.length]; spawnIdx++;
+  const t = ENEMY_TYPES.find(t => t.key === TYPE_SEQUENCE[spawnedCount % TYPE_SEQUENCE.length]) || ENEMY_TYPES[0];
+  const blaster = ENEMY_BLASTERS[spawnedCount % ENEMY_BLASTERS.length];
+  const bonus = (spawnedCount % 3 === 2);                 // every 3rd is a flashing bonus
+  const x = c * TS, z = r * TS;
+  const grp = spawnCar(t.model, blaster, x, z, 0, bonus ? 0xffe24a : t.color);
+  const en = {
+    group: grp, x, z, dead: false, dir: { dc: 0, dr: 1 },
+    type: t.key, hp: t.hp, maxHp: t.hp, speed: t.speed, fireInt: t.fire,
+    bonus, fireT: 40 + (spawnedCount * 17) % 60,
+    roamUntil: frame + 260 + Math.floor(Math.random() * 320),
+  };
+  if (bonus) {                                            // pulsing star marker = drops a power-up
+    const star = new THREE.Mesh(
+      new THREE.OctahedronGeometry(0.34),
+      new THREE.MeshBasicMaterial({ color: 0xffe24a })
+    );
+    star.position.y = 1.5; grp.add(star); en.star = star;
+  }
+  enemies.push(en);
+  spawnedCount++;
+  updateEnemyHUD();
+}
+
+// player bullet hits an enemy: armor soaks multiple hits before it's destroyed
+function hitEnemy(en) {
+  if (en.dead) return;
+  en.hp--; en.hitT = frame;
+  if (en.hp <= 0) destroyEnemy(en, false);
+}
+
+function destroyEnemy(en, silent) {
+  if (en.dead) return;
+  en.dead = true;
+  spawnBlast(en.x, en.z, 0xffaa33, 'big');   // explosion when a tank is blown up
+  if (en.group) scene.remove(en.group);
+  killedCount++;
+  updateEnemyHUD();
+  // only FLASHING (bonus) enemies drop power-ups
+  if (!silent && en.bonus) {
+    const type = PU_TYPES[Math.floor(Math.random() * PU_TYPES.length)];
+    spawnPickup(en.x, en.z, type);
+  }
+  if (killedCount >= WAVE_TOTAL) winGame();
+}
+
+// ── Win / lose ──────────────────────────────────────────
+function endGame(state, title, sub, col) {
+  if (gameState !== 'play') return;
+  gameState = state;
+  const o = document.getElementById('gameover');
+  if (o) {
+    o.querySelector('.go-title').textContent = title;
+    o.querySelector('.go-title').style.color = col;
+    o.querySelector('.go-sub').textContent = sub;
+    o.style.display = 'flex';
+  }
+}
+function winGame()   { endGame('win',  'ZONE CLEAR',          'All hostiles eliminated', '#33ff99'); }
+function loseGame()  { endGame('lose', 'OBJECTIVE DESTROYED', 'The core has fallen',      '#ff3322'); }
+function losePlayer(){
+  if (gameState !== 'play') return;
+  lives--; updateLivesHUD();
+  if (lives <= 0) { endGame('lose', 'GAME OVER', 'Out of lives', '#ff3322'); return; }
+  // respawn at the start point with a brief shield (grace period)
+  playerX = PR.start.x; playerZ = PR.start.z;
+  faceX = 0; faceZ = -1; playerYaw = Math.atan2(faceX, faceZ) + YAW_OFFSET;
+  player.position.set(playerX, 0, playerZ); player.rotation.y = playerYaw;
+  shieldUntil = frame + 150;
+}
+function updateLivesHUD() {
+  const el = document.getElementById('livesVal');
+  if (el) el.textContent = String(Math.max(0, lives));
+}
+
+function updateEnemyHUD() {
+  const el = document.getElementById('enemyCount');
+  if (el) el.textContent = String(Math.max(0, WAVE_TOTAL - killedCount)).padStart(2, '0');
+}
+
+function updateEnemies(dt) {
+  // spawn pacing
+  if (spawnedCount < WAVE_TOTAL &&
+      enemies.filter(e => !e.dead).length < MAX_ALIVE &&
+      frame - lastSpawn >= SPAWN_INTERVAL) {
+    lastSpawn = frame; spawnEnemy();
+  }
+  const frozen = frame < clockUntil;          // Clock power-up freezes enemies
+  for (const en of enemies) {
+    if (en.dead) continue;
+    if (!frozen) {
+      const c = Math.round(en.x / TS), r = Math.round(en.z / TS);
+      const cx = c * TS, cz = r * TS;
+      const atCentre = Math.abs(en.x - cx) < 0.02 && Math.abs(en.z - cz) < 0.02;
+      const blockedTile = (dc, dr) => enemyOnTile(c + dc, r + dr, en) || playerOnTile(c + dc, r + dr);
+      // Decide direction only at tile centres (clean grid motion, no jitter)
+      if (atCentre) {
+        en.x = cx; en.z = cz;                       // exact snap to centre
+        const roaming = frame < en.roamUntil;
+        let dir = roaming ? (roamDir(c, r, en) || nextDir(c, r)) : (nextDir(c, r) || roamDir(c, r, en));
+        if (!dir || blockedTile(dir.dc, dir.dr) || !PR.tileOK(c + dir.dc, r + dir.dr)) {
+          const opts = [[1,0],[-1,0],[0,1],[0,-1]]
+            .filter(([dc, dr]) => PR.tileOK(c + dc, r + dr) && !blockedTile(dc, dr));
+          dir = opts.length ? { dc: opts[(spawnedCount + frame) % opts.length][0], dr: opts[(spawnedCount + frame) % opts.length][1] } : null;
+        }
+        en.dir = dir;
+      }
+      // Move toward the next tile centre, clamped so we land exactly on it
+      if (en.dir && !blockedTile(en.dir.dc, en.dir.dr)) {
+        const step = en.speed * dt;
+        const tx = (c + en.dir.dc) * TS, tz = (r + en.dir.dr) * TS;
+        const sx = tx - en.x, sz = tz - en.z;
+        en.x += Math.abs(sx) <= step ? sx : Math.sign(sx) * step;
+        en.z += Math.abs(sz) <= step ? sz : Math.sign(sz) * step;
+        en.group.rotation.y = Math.atan2(en.dir.dc, en.dir.dr) + YAW_OFFSET;
+      }
+      en.group.position.set(en.x, 0, en.z);
+      // fire toward the objective on a cadence (straight line only)
+      if ((en.fireT -= dt) <= 0) {
+        en.fireT = en.fireInt;
+        const [dx, dz] = cardinal(PR.base.x - en.x, PR.base.z - en.z);
+        spawnBolt(en.x + dx * 0.8, en.z + dz * 0.8, dx, dz, 'enemy');
+      }
+    }
+    // flashing bonus marker spins + bobs; armor flashes briefly when hit
+    if (en.star) { en.star.rotation.y += 0.12; en.star.position.y = 1.5 + 0.18 * Math.sin(frame * 0.18); en.star.visible = (frame % 16) < 11; }
+    const sc = (en.hitT && frame - en.hitT < 6) ? 1.15 : 1;
+    en.group.scale.setScalar(sc);
+  }
+}
+
+// ─────────────────────────────────────────────
+//  POWER-UPS  (drop from kills): Nuke, Clock, Shield, Steel
+// ─────────────────────────────────────────────
+const pickups = [];
+let clockUntil = 0, shieldUntil = 0, steelUntil = 0;
+let shieldMesh = null, steelMesh = null;
+const PU_DUR = 600;            // 10s at 60fps (timed effects)
+const DROP_CHANCE = 0.5;       // chance a killed enemy drops a power-up
+const PU_TYPES = ['nuke', 'clock', 'shield', 'steel'];
+const PU_COLOR = { nuke: 0xff3322, clock: 0x33aaff, shield: 0x00e0ff, steel: 0x9aa0a6 };
+const PU_LABEL = { nuke: 'NUKE', clock: 'CLOCK', shield: 'SHIELD', steel: 'STEEL' };
+
+function makePickupIcon(type) {
+  const col = PU_COLOR[type];
+  const mat = new THREE.MeshStandardMaterial({ color: col, emissive: new THREE.Color(col), emissiveIntensity: 1.3, roughness: 0.4 });
+  let geo;
+  if (type === 'nuke')       geo = new THREE.SphereGeometry(0.34, 16, 12);
+  else if (type === 'clock') geo = new THREE.TorusGeometry(0.3, 0.11, 10, 20);
+  else if (type === 'shield')geo = new THREE.OctahedronGeometry(0.42);
+  else                       geo = new THREE.BoxGeometry(0.55, 0.55, 0.55);
+  return new THREE.Mesh(geo, mat);
+}
+
+function spawnPickup(x, z, type) {
+  const g = new THREE.Group();
+  const icon = makePickupIcon(type);
+  icon.position.y = 0.7; g.add(icon);
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.5, 0.66, 32),
+    new THREE.MeshBasicMaterial({ color: PU_COLOR[type], side: THREE.DoubleSide, transparent: true, opacity: 0.7 })
+  );
+  ring.rotation.x = -Math.PI / 2; ring.position.y = 0.05; g.add(ring);
+  const light = new THREE.PointLight(PU_COLOR[type], 2.2, 4);
+  light.position.y = 0.7; g.add(light);
+  g.position.set(x, 0, z);
+  scene.add(g);
+  pickups.push({ group: g, icon, x, z, type });
+}
+
+function applyPickup(type) {
+  if (type === 'nuke') {
+    for (const en of enemies) if (!en.dead) destroyEnemy(en, true);   // silent: no chain drops
+  } else if (type === 'clock')  clockUntil  = frame + PU_DUR;
+  else if (type === 'shield')   shieldUntil = frame + PU_DUR;
+  else if (type === 'steel')    steelUntil  = frame + PU_DUR;
+  updatePowerHUD();
+}
+
+function updatePickups() {
+  for (let i = pickups.length - 1; i >= 0; i--) {
+    const p = pickups[i];
+    p.icon.rotation.y += 0.06;
+    p.icon.position.y = 0.7 + 0.12 * Math.sin(frame * 0.1);
+    if (Math.abs(p.x - playerX) < 1.0 && Math.abs(p.z - playerZ) < 1.0) {
+      applyPickup(p.type);
+      scene.remove(p.group); pickups.splice(i, 1);
+    }
+  }
+}
+
+function updatePowerHUD() {
+  const el = document.getElementById('powerups');
+  if (!el) return;
+  const active = [];
+  if (frame < shieldUntil) active.push(['shield', shieldUntil]);
+  if (frame < clockUntil)  active.push(['clock',  clockUntil]);
+  if (frame < steelUntil)  active.push(['steel',  steelUntil]);
+  el.innerHTML = active.map(([t, until]) => {
+    const s = Math.ceil((until - frame) / 60);
+    const c = '#' + PU_COLOR[t].toString(16).padStart(6, '0');
+    return `<span class="pu" style="border-color:${c};color:${c}">${PU_LABEL[t]} ${s}s</span>`;
+  }).join('');
+}
+
+// ─────────────────────────────────────────────
+//  ANIMATE
+// ─────────────────────────────────────────────
+let frame = 0, lastT = 0;
+function animate(t) {
+  requestAnimationFrame(animate);
+  // delta-time: 1.0 == one 60fps frame. Clamps big gaps so speed stays consistent
+  // across refresh rates / background throttling.
+  const dt = (lastT && t) ? Math.min((t - lastT) / 16.667, 3) : 1;
+  if (t) lastT = t;
+  frame += dt;
+  if (gameState === 'play') {
+    updatePlayer(dt);
+    fireIfReady();
+    updateEnemies(dt);
+    updateBolts(dt);
+    updatePickups();
+    updatePowerHUD();
+  }
+  updateEffects(dt);   // explosions/debris finish even on game over
+
+  // Power-up visual states
+  if (shieldMesh) shieldMesh.visible = gameState === 'play' && frame < shieldUntil;
+  if (steelMesh)  steelMesh.visible  = gameState === 'play' && frame < steelUntil;
+
+  // Pulse car under-glows (cyan player, red enemies) + base beacon (green)
+  scene.traverse(o => {
+    if (!o.isPointLight) return;
+    const hex = o.color.getHex();
+    if (hex === 0x00ccff) o.intensity = 3 + 1.4 * Math.sin(frame * 0.07);
+    if (hex === 0xff2a2a) o.intensity = 2.6 + 1.2 * Math.sin(frame * 0.06);
+    if (hex === 0x33ff99) o.intensity = 5 + 2.5 * Math.sin(frame * 0.06);
+  });
+
+  // Bob + spin the objective marker
+  if (baseMarker) {
+    baseMarker.position.y = 4.2 + 0.35 * Math.sin(frame * 0.06);
+    baseMarker.rotation.y = frame * 0.02;
+  }
+
+  renderer.render(scene, camera);
+}
+
+// ─────────────────────────────────────────────
+//  HUD SETUP
+// ─────────────────────────────────────────────
+function buildHUD() {
+  // Minimap — draw road grid + car blips (cols/rows as % of the 14-tile map)
+  const grid = document.getElementById('mmGrid');
+  if (grid) {
+    const pct = i => (i / 13) * 100;
+    const roadCols = [0.5, 6.5, 12.5, 4, 9];   // arterial pair centres + alleys
+    const roadRows = [0.5, 6.5, 12.5, 4, 9];
+    const widePair = new Set([0.5, 6.5, 12.5]);
+    roadCols.forEach(c => {
+      const el = document.createElement('div');
+      el.className = 'mm-road';
+      el.style.left = pct(c) + '%'; el.style.top = '0'; el.style.bottom = '0';
+      el.style.width = (widePair.has(c) ? 4 : 2) + 'px';
+      el.style.transform = 'translateX(-50%)';
+      grid.appendChild(el);
+    });
+    roadRows.forEach(r => {
+      const el = document.createElement('div');
+      el.className = 'mm-road';
+      el.style.top = pct(r) + '%'; el.style.left = '0'; el.style.right = '0';
+      el.style.height = (widePair.has(r) ? 4 : 2) + 'px';
+      el.style.transform = 'translateY(-50%)';
+      grid.appendChild(el);
+    });
+    mmGridEl = grid;   // enemy dots are added/removed dynamically by the enemy system
+    // player blip (enemies get their own dots at spawn time)
+    const pl = document.createElement('div');
+    pl.className = 'mm-dot mm-player'; pl.id = 'mmPlayer';
+    pl.style.left = pct(8.5) + '%'; pl.style.top = pct(11) + '%';
+    grid.appendChild(pl);
+    // Base / objective marker at bottom-CENTRE (col 6.5, row 12)
+    const base = document.createElement('div');
+    base.className = 'mm-dot mm-base';
+    base.style.left = pct(6.5) + '%'; base.style.top = pct(11) + '%';
+    grid.appendChild(base);
+  }
+}
+
+// ─────────────────────────────────────────────
+//  INIT
+// ─────────────────────────────────────────────
+buildHUD();
+buildScene().then(animate);
+
+// Start / Restart buttons
+document.getElementById('startBtn').addEventListener('click', () => {
+  document.getElementById('start').style.display = 'none';
+  lastSpawn = frame;            // begin spawning from the moment play starts
+  gameState = 'play';
+});
+document.getElementById('restartBtn').addEventListener('click', () => location.reload());
+</script>
+</body>
+</html>

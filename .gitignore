@@ -1,0 +1,19 @@
+# OS / editor
+.DS_Store
+
+# Local tooling (dev-server launch config, not needed for hosting)
+.claude/
+
+# Unused Kenney asset kits — not referenced by the game (kept locally, excluded from the repo)
+assets/kenney_3d-road-tiles/
+assets/kenney_brick-kit/
+assets/kenney_city-kit-commercial_2.1/
+assets/kenney_isometric-roads/
+assets/kenney_top-down-tanks/
+
+# The game only loads "GLB format/*.glb" (each GLB folder has its own Textures).
+# Exclude the other export formats / preview renders the browser never fetches.
+**/FBX format/
+**/OBJ format/
+**/Previews/
+**/Models/Textures/
