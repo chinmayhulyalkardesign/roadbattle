@@ -703,7 +703,7 @@ async function buildScene() {
     const x = c * TS, z = r * TS;
     const cheby = Math.max(Math.abs(x - BASE.x), Math.abs(z - BASE.z));
     if (cheby <= PR.ring + 0.6) return false;             // wall / core
-    return isRoad(c, r) || cheby < PLAZA_H;               // road or plaza
+    return isRoad(c, r) || cheby < PLAZA_H + 0.4;         // road or plaza (match visible floor)
   };
   {
     const dist = Array.from({ length: COLS }, () => Array(ROWS).fill(Infinity));
@@ -963,7 +963,7 @@ function drivable(x, z) {
   const key = c + ',' + r;
   if (PR.cleared && PR.cleared.has(key)) return true;            // collapsed building → driveable path
   if (PR.bunkers && PR.bunkers.has(key)) return false;           // central bunkers solid
-  const inP = Math.max(Math.abs(x - PR.base.x), Math.abs(z - PR.base.z)) < PR.plazaH;
+  const inP = Math.max(Math.abs(x - PR.base.x), Math.abs(z - PR.base.z)) < PR.plazaH + 0.4;
   if (!(isRoad(c, r) || inP)) return false;                      // buildings & trees block
   // block the walled objective (wall ring + interior core)
   const cheby = Math.max(Math.abs(x - PR.base.x), Math.abs(z - PR.base.z));
@@ -1362,7 +1362,10 @@ function updateEnemies(dt) {
         if (!dir || blockedTile(dir.dc, dir.dr) || !PR.tileOK(c + dir.dc, r + dir.dr)) {
           const opts = [[1,0],[-1,0],[0,1],[0,-1]]
             .filter(([dc, dr]) => PR.tileOK(c + dc, r + dr) && !blockedTile(dc, dr));
-          dir = opts.length ? { dc: opts[(spawnedCount + frame) % opts.length][0], dr: opts[(spawnedCount + frame) % opts.length][1] } : null;
+          // NOTE: `frame` is fractional (delta-time accumulation), so floor before
+          // indexing — opts[<float>] would be undefined and crash the whole loop.
+          const pick = opts.length ? opts[(spawnedCount + Math.floor(frame)) % opts.length] : null;
+          dir = pick ? { dc: pick[0], dr: pick[1] } : null;
         }
         en.dir = dir;
       }
