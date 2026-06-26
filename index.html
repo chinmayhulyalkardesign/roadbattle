@@ -115,7 +115,7 @@ html, body {
     <div id="powerups"></div>
     <div class="sb-spacer"></div>
     <div class="sb-divider"></div>
-    <div class="sb-controls"><b>ARROWS</b> drive<br><b>SPACE</b> fire<br><b>SHIFT</b> turbo</div>
+    <div class="sb-controls"><b>ARROWS</b> drive<br><b>SPACE</b> fire<br><b>SHIFT</b> turbo<br><b>M</b> sound <span id="muteState">ON</span></div>
   </div>
 
   <!-- LOADING -->
@@ -841,7 +841,68 @@ addEventListener('keyup', e => {
   const k = e.key.toLowerCase();
   if (ARROW[k]) { const d = ARROW[k]; keys[d] = false; const i = dirStack.indexOf(d); if (i >= 0) dirStack.splice(i, 1); }
   if (k === ' ' || e.code === 'Space') keys.fire = false;
+  if (k === 'm') toggleMute();
 });
+
+// ─────────────────────────────────────────────
+//  AUDIO — procedural Web Audio (no asset files)
+// ─────────────────────────────────────────────
+let actx = null, master = null, engineGain = null, muted = false;
+function initAudio() {
+  if (actx) { if (actx.state === 'suspended') actx.resume(); return; }
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return;
+  actx = new AC();
+  master = actx.createGain(); master.gain.value = muted ? 0 : 0.85; master.connect(actx.destination);
+
+  // (1) Engine hum — low sawtooth through a lowpass, gain ramps with movement
+  engineGain = actx.createGain(); engineGain.gain.value = 0;
+  const eo = actx.createOscillator(); eo.type = 'sawtooth'; eo.frequency.value = 56;
+  const elp = actx.createBiquadFilter(); elp.type = 'lowpass'; elp.frequency.value = 200;
+  eo.connect(elp); elp.connect(engineGain); engineGain.connect(master); eo.start();
+
+  // (2) Ambient drone — two detuned sines with a slow swell
+  const ag = actx.createGain(); ag.gain.value = 0.05; ag.connect(master);
+  const a1 = actx.createOscillator(); a1.type = 'sine'; a1.frequency.value = 55;
+  const a2 = actx.createOscillator(); a2.type = 'sine'; a2.frequency.value = 73.4;
+  const lfo = actx.createOscillator(); lfo.frequency.value = 0.07;
+  const lfoG = actx.createGain(); lfoG.gain.value = 0.025;
+  lfo.connect(lfoG); lfoG.connect(ag.gain);
+  a1.connect(ag); a2.connect(ag); a1.start(); a2.start(); lfo.start();
+}
+function tone(freq, dur, type, vol, slideTo) {
+  if (!actx || muted) return;
+  const t = actx.currentTime;
+  const o = actx.createOscillator(); o.type = type; o.frequency.setValueAtTime(freq, t);
+  if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t + dur);
+  const g = actx.createGain(); g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g); g.connect(master); o.start(t); o.stop(t + dur + 0.02);
+}
+function noise(dur, vol, lpStart, lpEnd) {
+  if (!actx || muted) return;
+  const t = actx.currentTime;
+  const n = actx.createBufferSource();
+  const buf = actx.createBuffer(1, Math.max(1, actx.sampleRate * dur), actx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  n.buffer = buf;
+  const lp = actx.createBiquadFilter(); lp.type = 'lowpass';
+  lp.frequency.setValueAtTime(lpStart, t); lp.frequency.exponentialRampToValueAtTime(lpEnd, t + dur);
+  const g = actx.createGain(); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  n.connect(lp); lp.connect(g); g.connect(master); n.start(t); n.stop(t + dur + 0.02);
+}
+const sfxFire      = () => tone(680, 0.12, 'square', 0.16, 200);          // (3) player launch
+const sfxFireEnemy = () => tone(360, 0.10, 'square', 0.06, 140);          // (3) enemy launch (quiet)
+const sfxBoom      = (big) => { noise(big ? 0.55 : 0.32, big ? 0.5 : 0.34, 1400, 60); tone(big ? 80 : 120, 0.28, 'triangle', 0.22, 38); }; // (4) blast
+const sfxImpact    = () => noise(0.11, 0.22, 2200, 320);                  // (5) bullet hits brick/wall
+const sfxPowerup   = () => [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => tone(f, 0.13, 'square', 0.16), i * 70)); // (6) power-up available
+function setEngine(on) { if (engineGain && actx) engineGain.gain.setTargetAtTime(on ? 0.13 : 0, actx.currentTime, 0.07); }
+function toggleMute() {
+  muted = !muted;
+  if (master && actx) master.gain.setTargetAtTime(muted ? 0 : 0.85, actx.currentTime, 0.04);
+  const el = document.getElementById('muteState'); if (el) el.textContent = muted ? 'OFF' : 'ON';
+}
 
 // Can a car occupy world point (x,z)? Roads + plaza + cleared rubble, minus objective & intact buildings.
 function drivable(x, z) {
@@ -894,6 +955,7 @@ function updatePlayer(dt) {
     playerYaw = Math.atan2(dx, dz) + YAW_OFFSET;
     [playerX, playerZ] = gridMove(playerX, playerZ, dx, dz, PLAYER_SPEED, true, dt);
   }
+  setEngine(!!dir);                               // (1) engine hum while moving
   player.position.set(playerX, 0, playerZ);
   player.rotation.y = playerYaw;                  // instant facing
 }
@@ -961,6 +1023,7 @@ function fireIfReady() {
   for (const b of bolts) if (!b.dead && b.team === 'player') return;
   const [dx, dz] = cardinal(faceX, faceZ);     // straight line only
   spawnBolt(playerX + dx * 0.8, playerZ + dz * 0.8, dx, dz, 'player');
+  sfxFire();                                    // (3) launch
 }
 
 function updateBolts(dt) {
@@ -971,9 +1034,9 @@ function updateBolts(dt) {
     const c = Math.round(b.x / TS), r = Math.round(b.z / TS), key = c + ',' + r;
     // hit an intact building → chip it
     if (PR.buildingHP && PR.buildingHP.has(key) && !PR.cleared.has(key)) {
-      damageBuilding(key); b.dead = true; continue;
+      damageBuilding(key); b.dead = true; sfxImpact(); continue;   // (5)
     }
-    if (blocksBolt(b.x, b.z)) { b.dead = true; continue; }
+    if (blocksBolt(b.x, b.z)) { b.dead = true; sfxImpact(); continue; }  // (5) wall/tree/edge
     b.mesh.position.set(b.x, 0.45, b.z);
   }
   // 1-for-1 cancel: any player bolt meeting any enemy bolt → both vanish
@@ -1009,11 +1072,11 @@ function updateBolts(dt) {
     if (b.dead) continue;
     const cheby = Math.max(Math.abs(b.x - PR.base.x), Math.abs(b.z - PR.base.z));
     // Steel power-up: indestructible shield around the objective for its duration
-    if (steelOn && b.team === 'enemy' && cheby <= PR.ring + 0.6) { b.dead = true; continue; }
+    if (steelOn && b.team === 'enemy' && cheby <= PR.ring + 0.6) { b.dead = true; sfxImpact(); continue; }
     // core hit (only matters once a wall gap exists)
     if (cheby < PR.coreR) {
       b.dead = true;
-      if (b.team === 'enemy') loseGame();
+      if (b.team === 'enemy') { sfxBoom(true); loseGame(); }     // (5) objective hit
       continue;
     }
     // wall segment hit
@@ -1021,7 +1084,7 @@ function updateBolts(dt) {
       if (w.hp <= 0) continue;
       if (Math.abs(b.x - w.x) < 0.5 && Math.abs(b.z - w.z) < 0.5) {
         b.dead = true;
-        if (b.team === 'enemy') { w.hp--; if (w.hp <= 0) breakWall(w); else damageWall(w); }
+        if (b.team === 'enemy') { w.hp--; sfxImpact(); if (w.hp <= 0) breakWall(w); else damageWall(w); }  // (5)
         break;
       }
     }
@@ -1176,6 +1239,7 @@ function destroyEnemy(en, silent) {
   if (en.dead) return;
   en.dead = true;
   spawnBlast(en.x, en.z, 0xffaa33, 'big');   // explosion when a tank is blown up
+  if (!silent) sfxBoom(false);               // (4) blast sound (nuke plays one big boom itself)
   if (en.group) scene.remove(en.group);
   killedCount++;
   updateEnemyHUD();
@@ -1191,6 +1255,7 @@ function destroyEnemy(en, silent) {
 function endGame(state, title, sub, col) {
   if (gameState !== 'play') return;
   gameState = state;
+  setEngine(false);            // cut the engine hum on game over
   const o = document.getElementById('gameover');
   if (o) {
     o.querySelector('.go-title').textContent = title;
@@ -1203,6 +1268,7 @@ function winGame()   { endGame('win',  'ZONE CLEAR',          'All hostiles elim
 function loseGame()  { endGame('lose', 'OBJECTIVE DESTROYED', 'The core has fallen',      '#ff3322'); }
 function losePlayer(){
   if (gameState !== 'play') return;
+  spawnBlast(playerX, playerZ, 0x18e8ff, 'big'); sfxBoom(true);   // (4) player blast
   lives--; updateLivesHUD();
   if (lives <= 0) { endGame('lose', 'GAME OVER', 'Out of lives', '#ff3322'); return; }
   // respawn at the start point with a brief shield (grace period)
@@ -1263,6 +1329,7 @@ function updateEnemies(dt) {
         en.fireT = en.fireInt;
         const [dx, dz] = cardinal(PR.base.x - en.x, PR.base.z - en.z);
         spawnBolt(en.x + dx * 0.8, en.z + dz * 0.8, dx, dz, 'enemy');
+        sfxFireEnemy();                          // (3) enemy launch (quiet)
       }
     }
     // flashing bonus marker spins + bobs; armor flashes briefly when hit
@@ -1309,10 +1376,12 @@ function spawnPickup(x, z, type) {
   g.position.set(x, 0, z);
   scene.add(g);
   pickups.push({ group: g, icon, x, z, type });
+  sfxPowerup();                                  // (6) power-up available
 }
 
 function applyPickup(type) {
   if (type === 'nuke') {
+    sfxBoom(true);                                                    // (4) one big nuke blast
     for (const en of enemies) if (!en.dead) destroyEnemy(en, true);   // silent: no chain drops
   } else if (type === 'clock')  clockUntil  = frame + PU_DUR;
   else if (type === 'shield')   shieldUntil = frame + PU_DUR;
@@ -1438,6 +1507,7 @@ buildScene().then(animate);
 
 // Start / Restart buttons
 document.getElementById('startBtn').addEventListener('click', () => {
+  initAudio();                  // user gesture → unlock/resume Web Audio
   document.getElementById('start').style.display = 'none';
   lastSpawn = frame;            // begin spawning from the moment play starts
   gameState = 'play';
