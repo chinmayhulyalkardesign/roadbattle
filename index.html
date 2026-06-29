@@ -910,15 +910,18 @@ function bassVoice(freq, t, dur, vol) {
   g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
   o.connect(lp); lp.connect(g); g.connect(musicGain); o.start(t); o.stop(t + dur + 0.02);
 }
-// Soft shimmer lead/arp (triangle + detuned square)
+// Warm detuned-saw lead — pure analog synthwave (no square/chip tone), legato tail
 function leadVoice(freq, t, dur, vol) {
-  const o = actx.createOscillator(); o.type = 'triangle'; o.frequency.value = freq;
-  const o2 = actx.createOscillator(); o2.type = 'square'; o2.frequency.value = freq; o2.detune.value = 5;
+  const lp = actx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 3200; lp.Q.value = 1;
   const g = actx.createGain();
-  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.02);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol, t + 0.03);
   g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  o.connect(g); o2.connect(g); g.connect(musicGain);
-  o.start(t); o2.start(t); o.stop(t + dur + 0.02); o2.stop(t + dur + 0.02);
+  [-7, 7].forEach(c => {
+    const o = actx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = freq; o.detune.value = c;
+    o.connect(lp); o.start(t); o.stop(t + dur + 0.05);
+  });
+  lp.connect(g); g.connect(musicGain);
 }
 function drumNoise(t, dur, vol, type, freq, q) {
   const n = actx.createBufferSource();
@@ -943,7 +946,7 @@ function playStep(step, t) {
   if (s === 4 || s === 12) drumNoise(t, 0.18, 0.4, 'bandpass', 1900, 0.7);  // snare/clap backbeat
   if (s % 4 === 2) drumNoise(t, 0.04, 0.14, 'highpass', 8000);    // offbeat closed hat
   const ai = ARP[s], an = ai < 3 ? ch.pad[ai] : ch.pad[0] + 12;
-  if (s % 2 === 1) leadVoice(midiHz(an + 12), t, STEP_DUR * 0.8, 0.05);     // quiet shimmer arp
+  if (s % 2 === 1) leadVoice(midiHz(an + 12), t, STEP_DUR * 1.5, 0.055);    // legato saw lead (notes blend, not chippy)
 }
 function startMusic() {
   if (!actx || seqTimer) return;
