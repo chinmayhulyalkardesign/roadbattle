@@ -862,66 +862,103 @@ function initAudio() {
   const elp = actx.createBiquadFilter(); elp.type = 'lowpass'; elp.frequency.value = 200;
   eo.connect(elp); elp.connect(engineGain); engineGain.connect(master); eo.start();
 
-  // (2) Ambient drone — two detuned sines with a slow swell
-  const ag = actx.createGain(); ag.gain.value = 0.05; ag.connect(master);
-  const a1 = actx.createOscillator(); a1.type = 'sine'; a1.frequency.value = 55;
-  const a2 = actx.createOscillator(); a2.type = 'sine'; a2.frequency.value = 73.4;
-  const lfo = actx.createOscillator(); lfo.frequency.value = 0.07;
-  const lfoG = actx.createGain(); lfoG.gain.value = 0.025;
-  lfo.connect(lfoG); lfoG.connect(ag.gain);
-  a1.connect(ag); a2.connect(ag); a1.start(); a2.start(); lfo.start();
+  // (2) Synthwave bed — low sub drone under the music for warmth
+  const ag = actx.createGain(); ag.gain.value = 0.035; ag.connect(master);
+  const a1 = actx.createOscillator(); a1.type = 'sine'; a1.frequency.value = 49;
+  const a2 = actx.createOscillator(); a2.type = 'sine'; a2.frequency.value = 49.3;   // slow detune beat
+  a1.connect(ag); a2.connect(ag); a1.start(); a2.start();
 
-  startMusic();   // retro chiptune loop on top of the drone
+  startMusic();   // (3) synthwave / outrun loop
 }
 
-// ── Retro chiptune loop (procedural step sequencer) ──
-const BPM = 132, STEP_DUR = 60 / BPM / 4;           // 16th-note duration
+// ─── Synthwave / Outrun loop (procedural step sequencer) ───────────────────
+// Lush detuned-saw pads + plucky bass + four-on-the-floor groove + soft arp.
+const BPM = 100, STEP_DUR = 60 / BPM / 4;             // 16th-note duration
 const midiHz = n => 440 * Math.pow(2, (n - 69) / 12);
-const CHORDS = [                                     // Am – F – C – G, one bar each
-  { bass: 45, tri: [57, 60, 64] },
-  { bass: 41, tri: [53, 57, 60] },
-  { bass: 48, tri: [60, 64, 67] },
-  { bass: 43, tri: [55, 59, 62] },
+const CHORDS = [                                       // Cm – Ab – Eb – Bb (i–VI–III–VII)
+  { bass: 36, pad: [60, 63, 67] },   // Cm
+  { bass: 32, pad: [56, 60, 63] },   // Ab
+  { bass: 39, pad: [63, 67, 70] },   // Eb
+  { bass: 34, pad: [58, 62, 65] },   // Bb
 ];
-const ARP = [0,1,2,1, 2,1,0,1, 0,1,2,3, 2,1,0,1];    // index into [root,3rd,5th,octave]
-function musicNote(freq, t, dur, type, vol) {
-  const o = actx.createOscillator(); o.type = type; o.frequency.value = freq;
+const ARP = [0,2,1,2, 0,2,1,2, 0,2,1,3, 2,1,0,2];      // index into pad[] (3 = root+octave)
+
+// Lush detuned-saw pad voice (the synthwave signature) — slow swell, filter bloom
+function padVoice(freq, t, dur, vol) {
+  const lp = actx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 4;
+  lp.frequency.setValueAtTime(600, t);
+  lp.frequency.linearRampToValueAtTime(2400, t + dur * 0.5);
+  lp.frequency.linearRampToValueAtTime(700, t + dur);
   const g = actx.createGain();
   g.gain.setValueAtTime(0.0001, t);
-  g.gain.exponentialRampToValueAtTime(vol, t + 0.012);
+  g.gain.linearRampToValueAtTime(vol, t + dur * 0.3);
+  g.gain.setValueAtTime(vol, t + dur * 0.7);
   g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  o.connect(g); g.connect(musicGain); o.start(t); o.stop(t + dur + 0.02);
+  [-8, 8].forEach(c => {
+    const o = actx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = freq; o.detune.value = c;
+    o.connect(lp); o.start(t); o.stop(t + dur + 0.05);
+  });
+  lp.connect(g); g.connect(musicGain);
 }
-function musicHat(t) {
-  const dur = 0.05, n = actx.createBufferSource();
+// Plucky saw bass with a fast filter-decay "pluck"
+function bassVoice(freq, t, dur, vol) {
+  const lp = actx.createBiquadFilter(); lp.type = 'lowpass';
+  lp.frequency.setValueAtTime(1700, t); lp.frequency.exponentialRampToValueAtTime(180, t + dur * 0.9);
+  const o = actx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = freq;
+  const g = actx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(lp); lp.connect(g); g.connect(musicGain); o.start(t); o.stop(t + dur + 0.02);
+}
+// Soft shimmer lead/arp (triangle + detuned square)
+function leadVoice(freq, t, dur, vol) {
+  const o = actx.createOscillator(); o.type = 'triangle'; o.frequency.value = freq;
+  const o2 = actx.createOscillator(); o2.type = 'square'; o2.frequency.value = freq; o2.detune.value = 5;
+  const g = actx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g); o2.connect(g); g.connect(musicGain);
+  o.start(t); o2.start(t); o.stop(t + dur + 0.02); o2.stop(t + dur + 0.02);
+}
+function drumNoise(t, dur, vol, type, freq, q) {
+  const n = actx.createBufferSource();
   const buf = actx.createBuffer(1, Math.max(1, actx.sampleRate * dur), actx.sampleRate);
   const d = buf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
   n.buffer = buf;
-  const hp = actx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 6500;
-  const g = actx.createGain(); g.gain.setValueAtTime(0.05, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  n.connect(hp); hp.connect(g); g.connect(musicGain); n.start(t); n.stop(t + dur + 0.02);
+  const f = actx.createBiquadFilter(); f.type = type; f.frequency.value = freq; if (q) f.Q.value = q;
+  const g = actx.createGain(); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  n.connect(f); f.connect(g); g.connect(musicGain); n.start(t); n.stop(t + dur + 0.02);
+}
+function kick(t) {
+  const o = actx.createOscillator(); o.type = 'sine';
+  o.frequency.setValueAtTime(150, t); o.frequency.exponentialRampToValueAtTime(48, t + 0.12);
+  const g = actx.createGain(); g.gain.setValueAtTime(0.85, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+  o.connect(g); g.connect(musicGain); o.start(t); o.stop(t + 0.2);
 }
 function playStep(step, t) {
   const ch = CHORDS[Math.floor(step / 16) % CHORDS.length], s = step % 16;
-  if (s === 0 || s === 4 || s === 8 || s === 12)        // bouncy quarter-note bass
-    musicNote(midiHz(ch.bass + ((s === 4 || s === 12) ? 12 : 0)), t, STEP_DUR * 1.7, 'square', 0.5);
-  const ai = ARP[s], note = ai < 3 ? ch.tri[ai] : ch.tri[0] + 12;   // 16th-note arpeggio
-  musicNote(midiHz(note), t, STEP_DUR * 0.9, 'triangle', 0.34);
-  if (s % 2 === 1) musicHat(t);                          // off-beat hat
+  if (s === 0) ch.pad.forEach(m => padVoice(midiHz(m), t, STEP_DUR * 16, 0.085));   // sustained pad chord
+  if (s % 2 === 0) bassVoice(midiHz(ch.bass + (s % 4 === 2 ? 12 : 0)), t, STEP_DUR * 1.6, 0.42);  // driving bass
+  if (s % 4 === 0) kick(t);                                       // four-on-the-floor
+  if (s === 4 || s === 12) drumNoise(t, 0.18, 0.4, 'bandpass', 1900, 0.7);  // snare/clap backbeat
+  if (s % 4 === 2) drumNoise(t, 0.04, 0.14, 'highpass', 8000);    // offbeat closed hat
+  const ai = ARP[s], an = ai < 3 ? ch.pad[ai] : ch.pad[0] + 12;
+  if (s % 2 === 1) leadVoice(midiHz(an + 12), t, STEP_DUR * 0.8, 0.05);     // quiet shimmer arp
 }
 function startMusic() {
   if (!actx || seqTimer) return;
-  musicGain = actx.createGain(); musicGain.gain.value = 0.16; musicGain.connect(master);
-  seqStep = 0; nextNoteT = actx.currentTime + 0.1;
+  musicGain = actx.createGain(); musicGain.gain.value = 0.32; musicGain.connect(master);
+  seqStep = 0; nextNoteT = actx.currentTime + 0.15;
   seqTimer = setInterval(() => {
-    if (!actx || actx.state !== 'running') return;       // don't pile up while suspended
+    if (!actx || actx.state !== 'running') return;     // don't pile up while suspended
     while (nextNoteT < actx.currentTime + 0.12) {
       playStep(seqStep, nextNoteT);
       nextNoteT += STEP_DUR;
-      seqStep = (seqStep + 1) % (16 * CHORDS.length);     // 4-bar loop
+      seqStep = (seqStep + 1) % (16 * CHORDS.length);   // 4-bar loop
     }
   }, 25);
 }
+
 function tone(freq, dur, type, vol, slideTo) {
   if (!actx || muted) return;
   const t = actx.currentTime;
@@ -944,11 +981,18 @@ function noise(dur, vol, lpStart, lpEnd) {
   const g = actx.createGain(); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
   n.connect(lp); lp.connect(g); g.connect(master); n.start(t); n.stop(t + dur + 0.02);
 }
-const sfxFire      = () => tone(680, 0.12, 'square', 0.16, 200);          // (3) player launch
-const sfxFireEnemy = () => tone(360, 0.10, 'square', 0.06, 140);          // (3) enemy launch (quiet)
-const sfxBoom      = (big) => { noise(big ? 0.55 : 0.32, big ? 0.5 : 0.34, 1400, 60); tone(big ? 80 : 120, 0.28, 'triangle', 0.22, 38); }; // (4) blast
-const sfxImpact    = () => noise(0.11, 0.22, 2200, 320);                  // (5) bullet hits brick/wall
-const sfxPowerup   = () => [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => tone(f, 0.13, 'square', 0.16), i * 70)); // (6) power-up available
+// SFX tuned to the synthwave palette — neon saw zaps + filtered booms + warm synth chimes.
+const sfxFire      = () => { tone(1150, 0.12, 'sawtooth', 0.12, 320); noise(0.03, 0.06, 6000, 2000); }; // (3) neon laser zap
+const sfxFireEnemy = () => tone(380, 0.10, 'sawtooth', 0.05, 130);                                       // (3) enemy launch (low/quiet, distinct)
+const sfxBoom      = (big) => {                                                                          // (4) blast
+  noise(0.05, big ? 0.46 : 0.32, 6000, 1200);                             // attack crack
+  noise(big ? 0.6 : 0.34, big ? 0.4 : 0.26, 1000, 40);                    // filtered body/tail
+  tone(big ? 100 : 140, big ? 0.34 : 0.24, 'sine', big ? 0.3 : 0.2, big ? 32 : 46);  // clean sub thump (punch)
+};
+const sfxImpact    = () => { noise(0.06, 0.18, 3400, 600); tone(500, 0.05, 'sawtooth', 0.06, 200); };    // (5) crisp wall/brick tick
+const sfxPowerup   = () => [659, 880, 1175, 1568].forEach((f, i) => setTimeout(() => {                   // (6) warm rising synth chime
+  tone(f, 0.18, 'sawtooth', 0.085); tone(f * 1.5, 0.18, 'triangle', 0.04);
+}, i * 80));
 function setEngine(on) { if (engineGain && actx) engineGain.gain.setTargetAtTime(on ? 0.13 : 0, actx.currentTime, 0.07); }
 function toggleMute() {
   muted = !muted;
