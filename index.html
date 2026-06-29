@@ -826,7 +826,7 @@ let player = null, playerX = 0, playerZ = 0, playerYaw = Math.PI, playerYawCur =
 let faceX = 0, faceZ = 1;            // last travel/aim direction (unit)
 const PR = {};                       // refs populated in buildScene
 const keys = {};
-let fireStyle = 1;                   // A/B fire SFX: 1 = pulse-blaster, 3 = noise burst (toggle with F)
+let fireStyle = 0;                   // index into FIRE_STYLES (cycle with F)
 const PLAYER_SPEED = 0.07;           // world units / frame
 const YAW_OFFSET = Math.PI;          // align car model nose to travel dir
 
@@ -843,7 +843,7 @@ addEventListener('keyup', e => {
   if (ARROW[k]) { const d = ARROW[k]; keys[d] = false; const i = dirStack.indexOf(d); if (i >= 0) dirStack.splice(i, 1); }
   if (k === ' ' || e.code === 'Space') keys.fire = false;
   if (k === 'm') toggleMute();
-  if (k === 'f') { fireStyle = fireStyle === 1 ? 3 : 1; updateFireLabel(); }   // A/B fire SFX
+  if (k === 'f') { fireStyle = (fireStyle + 1) % FIRE_STYLES.length; updateFireLabel(); }   // cycle fire SFX
 });
 
 // ─────────────────────────────────────────────
@@ -1012,28 +1012,63 @@ function noise(dur, vol, lpStart, lpEnd, verb) {
 // Clean, smooth sine/triangle cores — no harsh saws, no pitch-sweep "pew", no
 // noise blips. Each effect is short, distinct and punchy, with only a light
 // reverb send so it sits with the music without washing out.
-// ── A/B FIRE SOUNDS (temporary) — press F in-game to switch styles ──
-// Option 1 — Punchy pulse-blaster: low sine punch w/ fast pitch drop + click snap
-function shotPulse(base, vol, verb) {
-  if (!actx || muted) return;
-  const t = actx.currentTime;
-  const o = actx.createOscillator(); o.type = 'sine';
-  o.frequency.setValueAtTime(base, t); o.frequency.exponentialRampToValueAtTime(base * 0.45, t + 0.07);
-  const g = actx.createGain();
-  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.004);
-  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
-  o.connect(g); g.connect(master); sendVerb(g, verb);
-  o.start(t); o.stop(t + 0.14);
-  noise(0.02, vol * 0.5, 4500, 900);                       // click transient (attack snap)
-}
-// Option 3 — Pulse-rifle noise burst: bright→dark filtered noise + low body thump
-function shotBurst(vol, lpStart, verb) {
-  if (!actx || muted) return;
+// ── FIRE SOUND CHOOSER (temporary) — press F in-game to cycle styles ──
+// Noise burst (kept) + four more distinct candidates.
+function shotBurst(vol, lpStart, verb) {        // filtered noise + low body thump
   noise(0.09, vol, lpStart, 380, verb);
   tone(150, 0.05, 'sine', vol * 0.5, 95);
 }
-const sfxFire      = () => fireStyle === 3 ? shotBurst(0.26, 3400, 0.16) : shotPulse(380, 0.16, 0.16);  // player shot
-const sfxFireEnemy = () => fireStyle === 3 ? shotBurst(0.12, 1900, 0.13) : shotPulse(190, 0.08, 0.13);  // enemy shot (low/quiet)
+function shotZap(base, vol, verb) {             // descending filtered-triangle laser (controlled)
+  const t = actx.currentTime;
+  const o = actx.createOscillator(); o.type = 'triangle';
+  o.frequency.setValueAtTime(base, t); o.frequency.exponentialRampToValueAtTime(base * 0.32, t + 0.16);
+  const lp = actx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = base * 4;
+  const g = actx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.006);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+  o.connect(lp); lp.connect(g); g.connect(master); sendVerb(g, verb);
+  o.start(t); o.stop(t + 0.22);
+}
+function shotChirp(base, vol, verb) {           // quick rising "zwip" energy chirp
+  const t = actx.currentTime;
+  const o = actx.createOscillator(); o.type = 'sine';
+  o.frequency.setValueAtTime(base * 0.5, t); o.frequency.exponentialRampToValueAtTime(base * 1.6, t + 0.1);
+  const g = actx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.13);
+  o.connect(g); g.connect(master); sendVerb(g, verb);
+  o.start(t); o.stop(t + 0.15);
+}
+function shotPhaser(base, vol, verb) {          // two detuned sines sweeping down (sci-fi phaser)
+  const t = actx.currentTime;
+  [[1, vol], [1.5, vol * 0.5]].forEach(([mul, v]) => {
+    const o = actx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(base * mul, t); o.frequency.exponentialRampToValueAtTime(base * 0.5, t + 0.14);
+    const g = actx.createGain();
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(v, t + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+    o.connect(g); g.connect(master); sendVerb(g, verb); o.start(t); o.stop(t + 0.2);
+  });
+}
+function shotKinetic(vol, verb) {               // suppressed real-gun-ish thud + filtered click
+  const t = actx.currentTime;
+  const o = actx.createOscillator(); o.type = 'sine';
+  o.frequency.setValueAtTime(220, t); o.frequency.exponentialRampToValueAtTime(70, t + 0.05);
+  const g = actx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.003);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+  o.connect(g); g.connect(master); sendVerb(g, verb); o.start(t); o.stop(t + 0.11);
+  noise(0.03, vol * 0.7, 3500, 600);
+}
+const FIRE_STYLES = [
+  { name: 'NOISE BURST',   p: () => shotBurst(0.26, 3400, 0.16), e: () => shotBurst(0.12, 1900, 0.13) },
+  { name: 'LASER ZAP',     p: () => shotZap(900, 0.14, 0.18),    e: () => shotZap(440, 0.06, 0.15) },
+  { name: 'CHARGED CHIRP', p: () => shotChirp(900, 0.13, 0.18),  e: () => shotChirp(480, 0.06, 0.15) },
+  { name: 'PHASER',        p: () => shotPhaser(620, 0.12, 0.2),  e: () => shotPhaser(320, 0.055, 0.16) },
+  { name: 'KINETIC THUMP', p: () => shotKinetic(0.2, 0.12),      e: () => shotKinetic(0.09, 0.1) },
+];
+const sfxFire      = () => { if (actx && !muted) FIRE_STYLES[fireStyle].p(); };
+const sfxFireEnemy = () => { if (actx && !muted) FIRE_STYLES[fireStyle].e(); };
 function updateFireLabel() {
   let el = document.getElementById('fireStyleLabel');
   if (!el) {
@@ -1043,8 +1078,9 @@ function updateFireLabel() {
       + 'padding:6px 10px;letter-spacing:.05em;text-align:right';
     document.body.appendChild(el);
   }
-  el.innerHTML = 'FIRE SFX: <b style="color:#fff">' + (fireStyle === 3 ? '3 · NOISE BURST' : '1 · PULSE-BLASTER')
-    + '</b><br><span style="opacity:.65">press F to switch</span>';
+  el.innerHTML = 'FIRE SFX <span style="opacity:.6">(' + (fireStyle + 1) + '/' + FIRE_STYLES.length + ')</span>: '
+    + '<b style="color:#fff">' + FIRE_STYLES[fireStyle].name + '</b><br>'
+    + '<span style="opacity:.65">press F to cycle</span>';
 }
 const sfxBoom      = (big) => {                                                          // (4) blast
   noise(big ? 0.5 : 0.3, big ? 0.42 : 0.3, big ? 2600 : 3200, 50, big ? 0.22 : 0.14);   // filtered noise body
