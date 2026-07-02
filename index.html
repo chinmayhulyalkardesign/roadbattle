@@ -250,7 +250,7 @@ const ZONES = [
   { name:'INDUSTRIAL', accent:'#ff8a2a', alleysC:[3,10], alleysR:[4,9],  seed:23, bldOff:3, treeMod:7,
     grass:0x2e2a20, amb:0xd8ccb8, ambI:2.6, sun:0xffe0b8, sunI:3.6,
     wave:22, maxAlive:6, spd:1.06, spawnInt:100,
-    hazards:{ turrets:[[3,3],[10,8]], kamikaze:true } },
+    hazards:{ turrets:[[4,3],[9,5]], kamikaze:true } },   // non-road tiles in this layout
   { name:'OLD TOWN',   accent:'#b06aff', alleysC:[2,11], alleysR:[3,10], seed:41, bldOff:6, treeMod:4,
     grass:0x1d2b2e, amb:0xb8c8e8, ambI:2.4, sun:0xe8e8ff, sunI:3.2,
     wave:24, maxAlive:6, spd:1.12, spawnInt:95,
@@ -851,6 +851,9 @@ async function buildScene() {
     scene.add(baseMarker);
   }
 
+  PR.mount = mountModel;          // hazards (turrets) mount models after build
+  buildHazards();                 // per-zone hazards (mines/turrets/lava/fog/…)
+
   // ── Hide loader, show start screen ──────────
   document.getElementById('progress').style.display = 'none';
   document.getElementById('start').style.display = 'flex';
@@ -1260,6 +1263,8 @@ function updateBolts(dt) {
     b.x += b.vx * dt; b.z += b.vz * dt; b.life -= dt;
     if (b.life <= 0) { b.dead = true; continue; }
     const c = Math.round(b.x / TS), r = Math.round(b.z / TS), key = c + ',' + r;
+    // player bolt entering a turret tile → chip the turret (before tile blocking)
+    if (b.team === 'player' && hitTurret(b)) { b.dead = true; continue; }
     // hit an intact building → chip it
     if (PR.buildingHP && PR.buildingHP.has(key) && !PR.cleared.has(key)) {
       damageBuilding(key); b.dead = true; sfxImpact(); continue;   // (5)
@@ -1446,13 +1451,20 @@ function spawnEnemy() {
   const t = ENEMY_TYPES.find(t => t.key === TYPE_SEQUENCE[spawnedCount % TYPE_SEQUENCE.length]) || ENEMY_TYPES[0];
   const blaster = ENEMY_BLASTERS[spawnedCount % ENEMY_BLASTERS.length];
   const bonus = (spawnedCount % 3 === 2);                 // every 3rd is a flashing bonus
+  // Kamikaze hazard: every 4th spawn charges the core and detonates (bonus wins ties)
+  const kamikaze = !bonus && !!(ZONE.hazards && ZONE.hazards.kamikaze) && (spawnedCount % 4 === 3);
   const x = c * TS, z = r * TS;
-  const grp = spawnCar(t.model, blaster, x, z, 0, bonus ? 0xffe24a : t.color);
+  const grp = spawnCar(kamikaze ? 'hatchback-sports' : t.model, blaster, x, z, 0,
+                       bonus ? 0xffe24a : kamikaze ? 0xff5500 : t.color,
+                       kamikaze ? 0xff5500 : undefined);
   const en = {
-    group: grp, x, z, dead: false, dir: { dc: 0, dr: 1 },
-    type: t.key, hp: t.hp, maxHp: t.hp, speed: t.speed * ZONE.spd, fireInt: t.fire,
+    group: grp, x, z, dead: false, dir: { dc: 0, dr: 1 }, kamikaze,
+    type: kamikaze ? 'kamikaze' : t.key,
+    hp: kamikaze ? 1 : t.hp, maxHp: t.hp,
+    speed: (kamikaze ? 0.066 : t.speed) * ZONE.spd,
+    fireInt: kamikaze ? 1e9 : t.fire,
     bonus, fireT: 40 + (spawnedCount * 17) % 60,
-    roamUntil: frame + 260 + Math.floor(Math.random() * 320),
+    roamUntil: kamikaze ? 0 : frame + 260 + Math.floor(Math.random() * 320),   // kamikaze: straight for the core
   };
   if (bonus) {                                            // pulsing star marker = drops a power-up
     const star = new THREE.Mesh(
@@ -1557,7 +1569,7 @@ function updateEnemyHUD() {
 let score = SAVE.score, combo = 0, comboUntil = 0;   // score carries across zones
 const COMBO_WINDOW = 180;                  // ~3s at 60fps to keep the streak alive
 const COMBO_MAX = 8;
-const PTS = { basic: 100, fast: 150, power: 200, armor: 300 };
+const PTS = { basic: 100, fast: 150, power: 200, armor: 300, kamikaze: 120 };
 const comboMult = () => Math.min(COMBO_MAX, Math.max(1, combo));
 function updateScoreHUD() {
   const s = document.getElementById('scoreVal'); if (s) s.textContent = score.toLocaleString();
@@ -1623,6 +1635,28 @@ function updateEnemies(dt) {
         en.group.rotation.y = Math.atan2(en.dir.dc, en.dir.dr) + YAW_OFFSET;
       }
       en.group.position.set(en.x, 0, en.z);
+      // Kamikaze: detonate on reaching the objective wall or ramming the player
+      if (en.kamikaze) {
+        const chB = Math.max(Math.abs(en.x - PR.base.x), Math.abs(en.z - PR.base.z));
+        if (chB <= PR.ring + 1.0) {
+          let best = null, bd = 1.6;                       // blow the nearest wall segment open
+          for (const w of walls) {
+            if (w.hp <= 0) continue;
+            const d = Math.max(Math.abs(en.x - w.x), Math.abs(en.z - w.z));
+            if (d < bd) { bd = d; best = w; }
+          }
+          if (best) { best.hp = 0; breakWall(best); }
+          spawnBlast(en.x, en.z, 0xff5500, 'big'); sfxBoom(true);
+          destroyEnemy(en, true);
+          continue;
+        }
+        if (Math.abs(en.x - playerX) < 0.9 && Math.abs(en.z - playerZ) < 0.9) {
+          spawnBlast(en.x, en.z, 0xff5500, 'big'); sfxBoom(true);
+          destroyEnemy(en, true);
+          hazardKillPlayer();
+          continue;
+        }
+      }
       // fire toward the objective on a cadence (straight line only)
       if ((en.fireT -= dt) <= 0) {
         en.fireT = en.fireInt;
@@ -1715,6 +1749,199 @@ function updatePowerHUD() {
 }
 
 // ─────────────────────────────────────────────
+//  HAZARDS — per-zone: mines, turrets, lava cracks, bomber runs,
+//  night-fog, power outage. Built after the scene; ticked in animate.
+// ─────────────────────────────────────────────
+const mines = [], lavas = [], turrets = [];
+const bomber = { nextAt: 900, marks: [], strikeAt: 0 };
+let outage = null;                          // { nextAt, until }
+let baseAmbI = 0, baseSunI = 0, baseFillI = 0;
+let hzSeed = 0;
+const hrnd = () => { hzSeed = (hzSeed * 1103515245 + 12345) & 0x7fffffff; return hzSeed / 0x7fffffff; };
+
+// Seeded pick of N distinct road tiles away from the base, player start & spawns
+function hazardTiles(n) {
+  const cand = [];
+  for (let c = 0; c < COLS; c++) for (let r = 2; r < ROWS; r++) {
+    if (!PR.tileOK(c, r)) continue;
+    if (Math.max(Math.abs(c * TS - PR.base.x), Math.abs(r * TS - PR.base.z)) < 4 * TS) continue;
+    if (PR.start && Math.max(Math.abs(c * TS - PR.start.x), Math.abs(r * TS - PR.start.z)) < 2.5 * TS) continue;
+    cand.push([c, r]);
+  }
+  for (let i = cand.length - 1; i > 0; i--) {           // seeded shuffle
+    const j = Math.floor(hrnd() * (i + 1)); [cand[i], cand[j]] = [cand[j], cand[i]];
+  }
+  return cand.slice(0, n);
+}
+
+function buildHazards() {
+  hzSeed = ZONE.seed * 31 + 5;
+  const H = ZONE.hazards || {};
+  // ── Mines: dark disc + blinking red cap; detonates on any car ──
+  hazardTiles(H.mines || 0).forEach(([c, r]) => {
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.36, 0.14, 16),
+      new THREE.MeshStandardMaterial({ color: 0x22262c, roughness: 0.6, metalness: 0.5 }));
+    body.position.y = 0.07; body.castShadow = true; g.add(body);
+    const cap = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 8),
+      new THREE.MeshBasicMaterial({ color: 0xff2222 }));
+    cap.position.y = 0.17; g.add(cap);
+    g.position.set(c * TS, 0, r * TS); scene.add(g);
+    mines.push({ x: c * TS, z: r * TS, g, cap, dead: false });
+  });
+  // ── Lava cracks: road tiles that flare on a telegraphed cycle ──
+  hazardTiles((H.lava || 0) * 2).slice(0, H.lava || 0).forEach(([c, r], i) => {
+    const plane = new THREE.Mesh(new THREE.PlaneGeometry(TS * 0.95, TS * 0.95),
+      new THREE.MeshBasicMaterial({ color: 0xff5a1a, transparent: true, opacity: 0 }));
+    plane.rotation.x = -Math.PI / 2; plane.position.set(c * TS, 0.03, r * TS); scene.add(plane);
+    const light = new THREE.PointLight(0xff5a1a, 0, 5);
+    light.position.set(c * TS, 0.8, r * TS); scene.add(light);
+    lavas.push({ x: c * TS, z: r * TS, plane, light, phase: i * 170 });
+  });
+  // ── Turrets: fixed emplacements on building tiles; fire when aligned ──
+  (H.turrets || []).forEach(([c, r]) => {
+    const key = c + ',' + r, x = c * TS, z = r * TS;
+    (PR.buildingMeshes.get(key) || []).forEach(m => scene.remove(m));   // clear the building
+    PR.buildingMeshes.delete(key); PR.buildingHP.delete(key); PR.trees.delete(key);
+    const meshes = [];
+    const base = new THREE.Mesh(new THREE.BoxGeometry(1.35, 0.6, 1.35),
+      new THREE.MeshStandardMaterial({ color: 0x3a2326, roughness: 0.85 }));
+    base.position.set(x, 0.3, z); base.castShadow = true; scene.add(base); meshes.push(base);
+    const gun = PR.mount ? PR.mount('blaster-h', x, z, 0.9, 0) : null;
+    if (gun) { gun.position.y += 0.6; meshes.push(gun); }
+    const glow = new THREE.PointLight(0xff3344, 2.5, 4);
+    glow.position.set(x, 1.2, z); scene.add(glow); meshes.push(glow);
+    turrets.push({ x, z, gun, meshes, hp: 4, fireT: 60, dead: false });
+  });
+  // ── Night-fog: crush the lights, give the player a headlight ──
+  if (H.fog) {
+    ambient.intensity *= 0.22; sun.intensity *= 0.32; fill.intensity *= 0.3;
+    renderer.setClearColor(new THREE.Color(ZONE.grass).multiplyScalar(0.35));
+    if (player) {
+      const head = new THREE.PointLight(0xcfe0ff, 9, 15, 1.2);
+      head.position.set(0, 2.4, 0); player.add(head);
+    }
+  }
+  // ── Power outage: periodic city-wide blackouts (set up state) ──
+  if (H.outage) outage = { nextAt: 700, until: 0 };
+  baseAmbI = ambient.intensity; baseSunI = sun.intensity; baseFillI = fill.intensity;
+}
+
+function hazardKillPlayer() {               // player caught by a hazard (shield saves)
+  if (frame < shieldUntil || gameState !== 'play') return;
+  losePlayer();
+}
+
+function hitTurret(b) {                     // player bolt entering a turret tile chips it
+  for (const t of turrets) {
+    if (t.dead) continue;
+    if (Math.abs(b.x - t.x) < 1.0 && Math.abs(b.z - t.z) < 1.0) {
+      t.hp--; sfxImpact();
+      if (t.hp <= 0) {
+        t.dead = true;
+        t.meshes.forEach(m => scene.remove(m));
+        spawnBlast(t.x, t.z, 0xff3344, 'big'); sfxBoom(false);
+        score += 200; updateScoreHUD();     // turret bounty
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
+function updateHazards(dt) {
+  // ── Mines: blink + proximity detonation ──
+  for (const m of mines) {
+    if (m.dead) continue;
+    m.cap.visible = (Math.floor(frame / 20) % 2) === 0;
+    let boom = false;
+    for (const en of enemies) {
+      if (en.dead) continue;
+      if (Math.abs(en.x - m.x) < 0.75 && Math.abs(en.z - m.z) < 0.75) { destroyEnemy(en, true); boom = true; break; }
+    }
+    if (!boom && Math.abs(playerX - m.x) < 0.7 && Math.abs(playerZ - m.z) < 0.7) { hazardKillPlayer(); boom = true; }
+    if (boom) { m.dead = true; scene.remove(m.g); spawnBlast(m.x, m.z, 0xff8833, 'big'); sfxBoom(false); }
+  }
+  // ── Lava cracks: telegraph → active (deadly) → rest ──
+  const LAVA_P = 520;
+  for (const l of lavas) {
+    const t = (frame + l.phase) % LAVA_P;
+    if (t < 140) {                                        // telegraph: dim pulse
+      l.plane.material.opacity = 0.18 + 0.14 * Math.sin(frame * 0.25);
+      l.light.intensity = 0;
+    } else if (t < 235) {                                 // ACTIVE: bright + lethal
+      l.plane.material.opacity = 0.85;
+      l.light.intensity = 6;
+      for (const en of enemies) {
+        if (!en.dead && Math.abs(en.x - l.x) < 0.9 && Math.abs(en.z - l.z) < 0.9) destroyEnemy(en, true);
+      }
+      if (Math.abs(playerX - l.x) < 0.8 && Math.abs(playerZ - l.z) < 0.8) hazardKillPlayer();
+    } else { l.plane.material.opacity = 0; l.light.intensity = 0; }
+  }
+  // ── Turrets: track + fire at the player when roughly aligned ──
+  for (const t of turrets) {
+    if (t.dead) continue;
+    const dx = playerX - t.x, dz = playerZ - t.z;
+    if (t.gun) t.gun.rotation.y = Math.atan2(dx, dz) + Math.PI;
+    const aligned = Math.abs(dx) < 0.9 || Math.abs(dz) < 0.9;
+    const near = Math.max(Math.abs(dx), Math.abs(dz)) < 9 * TS;
+    if ((t.fireT -= dt) <= 0 && aligned && near && gameState === 'play') {
+      t.fireT = 85;
+      const [cdx, cdz] = cardinal(dx, dz);
+      spawnBolt(t.x + cdx * 1.2, t.z + cdz * 1.2, cdx, cdz, 'enemy');
+      sfxFireEnemy();
+    }
+  }
+  // ── Bomber runs: telegraphed 3-tile strike near the player ──
+  if (ZONE.hazards && ZONE.hazards.bombers) {
+    if (!bomber.marks.length && frame >= bomber.nextAt) {
+      const pc = Math.round(playerX / TS), pr2 = Math.round(playerZ / TS);
+      const horiz = Math.random() < 0.5;
+      const oc = pc + Math.round((Math.random() - 0.5) * 4), or2 = pr2 + Math.round((Math.random() - 0.5) * 4);
+      for (let i = -1; i <= 1; i++) {
+        const c = horiz ? oc + i : oc, r = horiz ? or2 : or2 + i;
+        if (!PR.tileOK(c, r)) continue;
+        const ring = new THREE.Mesh(new THREE.RingGeometry(0.45, 0.75, 24),
+          new THREE.MeshBasicMaterial({ color: 0xff2222, transparent: true, opacity: 0.9, side: THREE.DoubleSide }));
+        ring.rotation.x = -Math.PI / 2; ring.position.set(c * TS, 0.05, r * TS); scene.add(ring);
+        bomber.marks.push({ x: c * TS, z: r * TS, ring });
+      }
+      bomber.strikeAt = frame + 110;
+      if (!bomber.marks.length) bomber.nextAt = frame + 300;   // nothing targetable — retry soon
+    }
+    if (bomber.marks.length) {
+      bomber.marks.forEach(mk => {                        // pulse the telegraph rings
+        const s = 1 + 0.25 * Math.sin(frame * 0.3);
+        mk.ring.scale.setScalar(s);
+      });
+      if (frame >= bomber.strikeAt) {                     // impact
+        bomber.marks.forEach(mk => {
+          spawnBlast(mk.x, mk.z, 0xff5522, 'big');
+          scene.remove(mk.ring);
+          for (const en of enemies) {
+            if (!en.dead && Math.abs(en.x - mk.x) < 1.0 && Math.abs(en.z - mk.z) < 1.0) destroyEnemy(en, true);
+          }
+          if (Math.abs(playerX - mk.x) < 0.9 && Math.abs(playerZ - mk.z) < 0.9) hazardKillPlayer();
+        });
+        sfxBoom(true);
+        bomber.marks.length = 0;
+        bomber.nextAt = frame + 750 + Math.random() * 450;
+      }
+    }
+  }
+  // ── Power outage: ramping city-wide blackout waves ──
+  if (outage) {
+    if (frame >= outage.nextAt) { outage.until = frame + 240; outage.nextAt = frame + 950 + Math.random() * 500; }
+    let f = 1;
+    if (frame < outage.until) {
+      const into = 240 - (outage.until - frame);
+      f = into < 25 ? 1 - (into / 25) * 0.92 : (outage.until - frame) < 25 ? 1 - ((outage.until - frame) / 25) * 0.92 : 0.08;
+    }
+    ambient.intensity = baseAmbI * f; sun.intensity = baseSunI * f; fill.intensity = baseFillI * f;
+  }
+}
+
+// ─────────────────────────────────────────────
 //  ANIMATE
 // ─────────────────────────────────────────────
 let frame = 0, lastT = 0;
@@ -1732,6 +1959,7 @@ function animate(t) {
     updateBolts(dt);
     updatePickups();
     updatePowerHUD();
+    updateHazards(dt);
     decayCombo();
   }
   updateEffects(dt);   // explosions/debris finish even on game over
