@@ -1287,7 +1287,8 @@ function updateBolts(dt) {
     if (b.dead || b.team !== 'player') continue;
     for (const en of enemies) {
       if (en.dead) continue;
-      if (Math.abs(b.x - en.x) < 0.9 && Math.abs(b.z - en.z) < 0.9) { b.dead = true; hitEnemy(en); break; }
+      const rad = en.boss ? 1.5 : 0.9;                    // the boss is a bigger target
+      if (Math.abs(b.x - en.x) < rad && Math.abs(b.z - en.z) < rad) { b.dead = true; hitEnemy(en); break; }
     }
   }
   // enemy bolt hits the player → lose, unless Shield is active (then blocked)
@@ -1482,6 +1483,7 @@ function spawnEnemy() {
 function hitEnemy(en) {
   if (en.dead) return;
   en.hp--; en.hitT = frame;
+  if (en.boss) updateBossBar();
   if (en.hp <= 0) destroyEnemy(en, false);
 }
 
@@ -1499,7 +1501,53 @@ function destroyEnemy(en, silent) {
     const type = PU_TYPES[Math.floor(Math.random() * PU_TYPES.length)];
     spawnPickup(en.x, en.z, type);
   }
-  if (killedCount >= WAVE_TOTAL) winGame();
+  if (en.boss) { bossKilled(en); return; }
+  if (killedCount >= WAVE_TOTAL) {
+    const hasBoss = !!(ZONE.hazards && ZONE.hazards.boss);
+    if (hasBoss && !bossSpawned) spawnBoss();     // Z5: the wave was just the warm-up
+    else if (!hasBoss) winGame();
+  }
+}
+
+// ── BOSS — "WARLORD" heavy at the end of Zone 05 (medium difficulty) ──
+let bossSpawned = false, bossEn = null, bossBarEl = null;
+function spawnBoss() {
+  bossSpawned = true;
+  const [c, r] = (PR.spawns && PR.spawns[0]) || [0, 0];
+  const x = c * TS, z = r * TS;
+  const grp = spawnCar('van', 'blaster-h', x, z, 0, 0xff2233, 0x6a1020);
+  grp.scale.setScalar(1.75);
+  bossEn = {
+    group: grp, x, z, dead: false, dir: { dc: 0, dr: 1 }, boss: true, baseScale: 1.75,
+    type: 'boss', hp: 24, maxHp: 24, speed: 0.030 * ZONE.spd, fireInt: 70,
+    bonus: false, fireT: 90, roamUntil: 0,               // relentless: straight for the core
+  };
+  enemies.push(bossEn);
+  spawnBlast(x, z, 0xff2233, 'big'); sfxBoom(true);      // entrance
+  const el = document.getElementById('enemyCount'); if (el) el.textContent = '!!';
+  updateBossBar();
+}
+function updateBossBar() {
+  if (!bossEn) return;
+  if (!bossBarEl) {
+    bossBarEl = document.createElement('div');
+    bossBarEl.style.cssText = 'position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:60;'
+      + 'width:340px;font:600 11px/1.4 monospace;color:#ff5566;letter-spacing:.2em;text-align:center';
+    bossBarEl.innerHTML = 'WARLORD<div style="margin-top:4px;height:10px;border:1px solid #ff3355;'
+      + 'border-radius:5px;overflow:hidden;background:rgba(20,6,10,.7)">'
+      + '<div id="bossFill" style="height:100%;width:100%;background:linear-gradient(90deg,#ff3355,#ff8866)"></div></div>';
+    document.body.appendChild(bossBarEl);
+  }
+  const fill = document.getElementById('bossFill');
+  if (fill) fill.style.width = Math.max(0, (bossEn.hp / bossEn.maxHp) * 100) + '%';
+}
+function bossKilled(en) {
+  score += 5000; updateScoreHUD();                       // boss bounty
+  [[-1,-1],[1,1],[-1,1],[1,-1],[0,0]].forEach(([ox,oz], i) =>
+    setTimeout(() => spawnBlast(en.x + ox, en.z + oz, 0xff2233, 'big'), i * 120));
+  sfxBoom(true);
+  if (bossBarEl) { bossBarEl.remove(); bossBarEl = null; }
+  winGame();                                             // Zone 05 is last → CAMPAIGN COMPLETE
 }
 
 // ── Win / lose ──────────────────────────────────────────
@@ -1661,14 +1709,20 @@ function updateEnemies(dt) {
       if ((en.fireT -= dt) <= 0) {
         en.fireT = en.fireInt;
         const [dx, dz] = cardinal(PR.base.x - en.x, PR.base.z - en.z);
-        spawnBolt(en.x + dx * 0.8, en.z + dz * 0.8, dx, dz, 'enemy');
+        if (en.boss) {                           // boss: 3-way spread (front + both flanks)
+          spawnBolt(en.x + dx * 1.4, en.z + dz * 1.4, dx, dz, 'enemy');
+          spawnBolt(en.x - dz * 1.4, en.z + dx * 1.4, -dz, dx, 'enemy');
+          spawnBolt(en.x + dz * 1.4, en.z - dx * 1.4, dz, -dx, 'enemy');
+        } else {
+          spawnBolt(en.x + dx * 0.8, en.z + dz * 0.8, dx, dz, 'enemy');
+        }
         sfxFireEnemy();                          // (3) enemy launch (quiet)
       }
     }
     // flashing bonus marker spins + bobs; armor flashes briefly when hit
     if (en.star) { en.star.rotation.y += 0.12; en.star.position.y = 1.5 + 0.18 * Math.sin(frame * 0.18); en.star.visible = (frame % 16) < 11; }
     const sc = (en.hitT && frame - en.hitT < 6) ? 1.15 : 1;
-    en.group.scale.setScalar(sc);
+    en.group.scale.setScalar((en.baseScale || 1) * sc);   // boss keeps its bulk
   }
 }
 
@@ -1715,7 +1769,12 @@ function spawnPickup(x, z, type) {
 function applyPickup(type) {
   if (type === 'nuke') {
     sfxBoom(true);                                                    // (4) one big nuke blast
-    for (const en of enemies) if (!en.dead) destroyEnemy(en, true);   // silent: no chain drops
+    for (const en of enemies) if (!en.dead) {
+      if (en.boss) {                                                  // boss shrugs off a nuke: heavy damage only
+        en.hp -= 6; en.hitT = frame; updateBossBar();
+        if (en.hp <= 0) destroyEnemy(en, true);
+      } else destroyEnemy(en, true);                                  // silent: no chain drops
+    }
   } else if (type === 'clock')  clockUntil  = frame + PU_DUR;
   else if (type === 'shield')   shieldUntil = frame + PU_DUR;
   else if (type === 'steel')    steelUntil  = frame + PU_DUR;
@@ -1857,7 +1916,11 @@ function updateHazards(dt) {
     let boom = false;
     for (const en of enemies) {
       if (en.dead) continue;
-      if (Math.abs(en.x - m.x) < 0.75 && Math.abs(en.z - m.z) < 0.75) { destroyEnemy(en, true); boom = true; break; }
+      if (Math.abs(en.x - m.x) < 0.75 && Math.abs(en.z - m.z) < 0.75) {
+        if (en.boss) { en.hp -= 3; en.hitT = frame; updateBossBar(); if (en.hp <= 0) destroyEnemy(en, true); }
+        else destroyEnemy(en, true);
+        boom = true; break;
+      }
     }
     if (!boom && Math.abs(playerX - m.x) < 0.7 && Math.abs(playerZ - m.z) < 0.7) { hazardKillPlayer(); boom = true; }
     if (boom) { m.dead = true; scene.remove(m.g); spawnBlast(m.x, m.z, 0xff8833, 'big'); sfxBoom(false); }
@@ -2032,6 +2095,7 @@ function buildHUD() {
 // ─────────────────────────────────────────────
 buildHUD();
 buildScene().then(animate);
+window.RB = { spawnBoss, winGame, loseGame };   // tiny debug/test handle
 
 // Zone-aware HUD + start screen (carried score/lives show immediately)
 {
