@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Road Blaster 2026</title>
+<title>Road Battle</title>
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
 
@@ -112,7 +112,7 @@ html, body {
 
   <!-- SIDEBAR (left) -->
   <div id="sidebar">
-    <div class="game-title">ROAD<br><b>BLASTER</b></div>
+    <div class="game-title">ROAD<br><b>BATTLE</b></div>
     <div class="sb-divider"></div>
     <div class="stat-row"><span class="stat-label">Lives</span><span class="stat-val" id="livesVal">3</span></div>
     <div class="stat-row"><span class="stat-label">Score</span><span class="stat-val" id="scoreVal">0</span></div>
@@ -124,7 +124,7 @@ html, body {
     <div id="powerups"></div>
     <div class="sb-spacer"></div>
     <div class="sb-divider"></div>
-    <div class="sb-controls"><b>ARROWS</b> drive<br><b>SPACE</b> fire<br><b>SHIFT</b> turbo<br><b>M</b> sound <span id="muteState">ON</span></div>
+    <div class="sb-controls"><b>ARROWS/WASD</b> drive<br><b>SPACE</b> fire<br><b>SHIFT</b> turbo<br><b>M</b> sound <span id="muteState">ON</span></div>
   </div>
 
   <!-- LOADING -->
@@ -134,11 +134,11 @@ html, body {
   </div>
 
   <div id="start">
-    <div class="go-title" style="color:#00aaff">ROAD BLASTER</div>
+    <div class="go-title" style="color:#00aaff">ROAD BATTLE</div>
     <div class="go-sub">Defend the core — clear the wave</div>
     <button id="startBtn" class="game-btn">Start</button>
     <div class="ctrl-panel">
-      <div class="ctrl"><span class="key">▲ ▼ ◀ ▶</span><span class="ctrl-lbl">Drive</span></div>
+      <div class="ctrl"><span class="key">▲▼◀▶ / WASD</span><span class="ctrl-lbl">Drive</span></div>
       <div class="ctrl"><span class="key">SPACE</span><span class="ctrl-lbl">Fire</span></div>
       <div class="ctrl"><span class="key">SHIFT</span><span class="ctrl-lbl">Turbo</span></div>
       <div class="ctrl"><span class="key">M</span><span class="ctrl-lbl">Sound</span></div>
@@ -883,7 +883,8 @@ const keys = {};
 const PLAYER_SPEED = 0.07;           // world units / frame
 const YAW_OFFSET = Math.PI;          // align car model nose to travel dir
 
-const ARROW = { arrowup: 'up', arrowdown: 'down', arrowleft: 'left', arrowright: 'right' };
+const ARROW = { arrowup: 'up', arrowdown: 'down', arrowleft: 'left', arrowright: 'right',
+                w: 'up', s: 'down', a: 'left', d: 'right' };   // arrows or WASD
 const DIR_VEC = { up: [0,-1], down: [0,1], left: [-1,0], right: [1,0] };
 const dirStack = [];   // arrow keys in press order → newest wins (responsive turning)
 addEventListener('keydown', e => {

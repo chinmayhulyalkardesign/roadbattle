@@ -1,10 +1,10 @@
-# Road Blaster 2026
+# Road Battle
 
 A top-down, retro Battle-City-style car-and-blaster defense game built with Three.js.
 Drive a blaster car, defend the central core from waves of enemy cars, grab power-ups,
-and clear the zone.
+and clear all 5 zones of the campaign.
 
-**Controls:** Arrow keys to drive · Space to fire · Shift to turbo.
+**Controls:** Arrow keys or WASD to drive · Space to fire · Shift to turbo · M sound.
 
 ## Tech
 - Single static `index.html` (no build step)
