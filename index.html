@@ -210,7 +210,8 @@ window.addEventListener('resize', () => {
 //  Fill — opposite corner, cool blue
 //  Ambient — mid-grey, keeps shadow areas readable
 // ─────────────────────────────────────────────
-scene.add(new THREE.AmbientLight(0xc8d8f0, 2.8));
+const ambient = new THREE.AmbientLight(0xc8d8f0, 2.8);
+scene.add(ambient);
 
 const sun = new THREE.DirectionalLight(0xfff8e8, 3.8);
 sun.position.set(CX + 20, 30, CZ - 15);
@@ -237,10 +238,46 @@ scene.add(fill);
 //  Buildings are NOT solid blocks — they sit as scattered obstacles in the
 //  small sub-areas left between all these streets, leaving open pathways.
 // ─────────────────────────────────────────────
+// ─────────────────────────────────────────────
+//  CAMPAIGN — 5 handcrafted zones. Score/lives carry across zones via
+//  sessionStorage; each zone is a fresh sim (layout applied before build).
+// ─────────────────────────────────────────────
+const ZONES = [
+  { name:'OUTSKIRTS',  accent:'#00aaff', alleysC:[4,9],  alleysR:[4,9],  seed:7,  bldOff:0, treeMod:5,
+    grass:0x223524, amb:0xc8d8f0, ambI:2.8, sun:0xfff8e8, sunI:3.8,
+    wave:20, maxAlive:5, spd:1.00, spawnInt:110,
+    hazards:{ mines:6 } },
+  { name:'INDUSTRIAL', accent:'#ff8a2a', alleysC:[3,10], alleysR:[4,9],  seed:23, bldOff:3, treeMod:7,
+    grass:0x2e2a20, amb:0xd8ccb8, ambI:2.6, sun:0xffe0b8, sunI:3.6,
+    wave:22, maxAlive:6, spd:1.06, spawnInt:100,
+    hazards:{ turrets:[[3,3],[10,8]], kamikaze:true } },
+  { name:'OLD TOWN',   accent:'#b06aff', alleysC:[2,11], alleysR:[3,10], seed:41, bldOff:6, treeMod:4,
+    grass:0x1d2b2e, amb:0xb8c8e8, ambI:2.4, sun:0xe8e8ff, sunI:3.2,
+    wave:24, maxAlive:6, spd:1.12, spawnInt:95,
+    hazards:{ lava:5, fog:true } },
+  { name:'BLACKOUT',   accent:'#8aa2ff', alleysC:[4,9],  alleysR:[2,11], seed:59, bldOff:9, treeMod:6,
+    grass:0x24242e, amb:0xb0b8d8, ambI:2.5, sun:0xe8e8f8, sunI:3.4,
+    wave:26, maxAlive:7, spd:1.20, spawnInt:85,
+    hazards:{ outage:true, bombers:true } },
+  { name:'THE CITADEL',accent:'#ff3355', alleysC:[3,10], alleysR:[3,10], seed:77, bldOff:2, treeMod:8,
+    grass:0x2e2024, amb:0xe0c8c8, ambI:2.6, sun:0xffd8d0, sunI:3.6,
+    wave:18, maxAlive:6, spd:1.15, spawnInt:95,
+    hazards:{ mines:5, kamikaze:true, boss:true } },
+];
+const SAVE_KEY = 'rb-campaign';
+function loadSave() { try { return JSON.parse(sessionStorage.getItem(SAVE_KEY)) || null; } catch (e) { return null; } }
+const SAVE = loadSave() || { zone: 0, score: 0, lives: 3 };
+if (SAVE.zone >= ZONES.length) SAVE.zone = 0;      // corrupt/stale save → fresh
+const ZONE = ZONES[SAVE.zone];
+// Apply the zone's colour grade (lights were created above with Z1 defaults)
+renderer.setClearColor(ZONE.grass);
+ambient.color.set(ZONE.amb); ambient.intensity = ZONE.ambI;
+sun.color.set(ZONE.sun);     sun.intensity     = ZONE.sunI;
+
 const ART_COLS  = new Set([0,1, 6,7, 12,13]); // arterial road columns (2-lane)
 const ART_ROWS  = new Set([0,1, 6,7, 12,13]); // arterial road rows
-const ALLEY_COLS= new Set([4, 9]);            // interior 1-lane streets (vertical)
-const ALLEY_ROWS= new Set([4, 9]);            // interior 1-lane streets (horizontal)
+const ALLEY_COLS= new Set(ZONE.alleysC);      // interior 1-lane streets (vertical, per zone)
+const ALLEY_ROWS= new Set(ZONE.alleysR);      // interior 1-lane streets (horizontal, per zone)
 const LEFT_COLS = new Set([0,6,12]);          // left lane of each arterial corridor
 const TOP_ROWS  = new Set([0,6,12]);          // top  lane of each arterial corridor
 
@@ -396,7 +433,7 @@ async function buildScene() {
   {
     const grass = new THREE.Mesh(
       new THREE.PlaneGeometry(220, 220),
-      new THREE.MeshStandardMaterial({ color: 0x223524, roughness: 1, metalness: 0 })
+      new THREE.MeshStandardMaterial({ color: ZONE.grass, roughness: 1, metalness: 0 })
     );
     grass.rotation.x = -Math.PI / 2;
     grass.position.set(CX, 0, CZ);
@@ -469,7 +506,7 @@ async function buildScene() {
                      'building-f','building-g','building-h','building-i','building-k',
                      'building-m','building-n'];
 
-  let hash = 7;
+  let hash = ZONE.seed;    // per-zone seed → different scatter each district
   const rnd = () => { hash = (hash * 1103515245 + 12345) & 0x7fffffff; return hash / 0x7fffffff; };
 
   const bandOf = i => (i <= 3 ? 0 : i === 5 ? 1 : i === 8 ? 2 : 3);
@@ -494,12 +531,12 @@ async function buildScene() {
       if (inPlaza(x, z)) continue;
 
       const cb = bandOf(col), rb = bandOf(row);
-      // Mock pattern: dense buildings everywhere, tree groves scattered ~1 in 5
-      const treeCell = (((col * 3 + row) % 5) === 0);
+      // Dense buildings with tree groves scattered — grove density varies per zone
+      const treeCell = (((col * 3 + row) % ZONE.treeMod) === 0);
 
       if (!treeCell) {
         // Tall building, one per cell, facing the street — destructible
-        const key = BUILDINGS[(cb * 4 + rb) % BUILDINGS.length];
+        const key = BUILDINGS[(cb * 4 + rb + ZONE.bldOff) % BUILDINGS.length];
         const meshes = [];
         const b = mountModel(key, x, z, 1.5, faceRoad(col, row), BLD_YSCALE);
         if (b) meshes.push(b);
@@ -559,7 +596,7 @@ async function buildScene() {
     const REACH = 13;
     const LO = -REACH, HI = (COLS - 1) + REACH;
 
-    const grassCol = new THREE.Color(0x223524);
+    const grassCol = new THREE.Color(ZONE.grass);
     const roadCol  = new THREE.Color(0x2a2f37);
 
     const isArterial = i => { const m = ((i % 6) + 6) % 6; return m === 0 || m === 1; };
@@ -1158,7 +1195,7 @@ const bolts = [];
 const walls = [];               // damageable objective wall segments {block, stripe, x, z, hp}
 let gameState = 'start';        // 'start' | 'play' | 'win' | 'lose'
 const PLAYER_LIVES = 3;
-let lives = PLAYER_LIVES;
+let lives = SAVE.lives;          // carried across zones (PLAYER_LIVES on a fresh run)
 let lastFire = -999;
 const FIRE_COOLDOWN = 14;       // frames (~0.23s) — unlimited ammo, deliberate cadence
 const BOLT_SPEED = 0.34;        // world units / frame
@@ -1371,9 +1408,9 @@ const ENEMY_TYPES = [
   { key:'armor', model:'van',              hp:3, speed:0.050, fire:110, color:0xff2a2a },
 ];
 const TYPE_SEQUENCE = ['basic','fast','basic','power','armor','fast'];   // spawn order per wave
-const WAVE_TOTAL = 20;       // 20 enemies must be cleared to win
-const MAX_ALIVE = 5;
-const SPAWN_INTERVAL = 110;  // frames between spawns
+const WAVE_TOTAL     = ZONE.wave;       // enemies to clear this zone
+const MAX_ALIVE      = ZONE.maxAlive;   // concurrent cap (rises per zone)
+const SPAWN_INTERVAL = ZONE.spawnInt;   // frames between spawns (shrinks per zone)
 let spawnedCount = 0, killedCount = 0, lastSpawn = 0, spawnIdx = 0;
 let mmGridEl = null;
 
@@ -1413,7 +1450,7 @@ function spawnEnemy() {
   const grp = spawnCar(t.model, blaster, x, z, 0, bonus ? 0xffe24a : t.color);
   const en = {
     group: grp, x, z, dead: false, dir: { dc: 0, dr: 1 },
-    type: t.key, hp: t.hp, maxHp: t.hp, speed: t.speed, fireInt: t.fire,
+    type: t.key, hp: t.hp, maxHp: t.hp, speed: t.speed * ZONE.spd, fireInt: t.fire,
     bonus, fireT: 40 + (spawnedCount * 17) % 60,
     roamUntil: frame + 260 + Math.floor(Math.random() * 320),
   };
@@ -1454,7 +1491,7 @@ function destroyEnemy(en, silent) {
 }
 
 // ── Win / lose ──────────────────────────────────────────
-function endGame(state, title, sub, col) {
+function endGame(state, title, sub, col, btnLabel) {
   if (gameState !== 'play') return;
   gameState = state;
   setEngine(false);            // cut the engine hum on game over
@@ -1464,16 +1501,40 @@ function endGame(state, title, sub, col) {
     o.querySelector('.go-title').textContent = title;
     o.querySelector('.go-title').style.color = col;
     o.querySelector('.go-sub').textContent = sub;
+    o.querySelector('#restartBtn').textContent = btnLabel || 'Restart';
     o.style.display = 'flex';
   }
 }
-function winGame()   { endGame('win',  'ZONE CLEAR',          'All hostiles eliminated', '#33ff99'); }
-function loseGame()  { endGame('lose', 'OBJECTIVE DESTROYED', 'The core has fallen',      '#ff3322'); }
+function winGame() {
+  if (gameState !== 'play') return;
+  score += 1000 * (SAVE.zone + 1); updateScoreHUD();          // zone-clear bonus
+  const zn = String(SAVE.zone + 1).padStart(2, '0');
+  if (SAVE.zone < ZONES.length - 1) {
+    // save progress → the Restart button reloads straight into the next zone
+    sessionStorage.setItem(SAVE_KEY, JSON.stringify({ zone: SAVE.zone + 1, score, lives }));
+    const next = ZONES[SAVE.zone + 1];
+    endGame('win', 'ZONE ' + zn + ' CLEAR',
+      'Score ' + score.toLocaleString() + ' — next: ' + next.name, '#33ff99',
+      'Enter Zone ' + String(SAVE.zone + 2).padStart(2, '0'));
+  } else {
+    sessionStorage.removeItem(SAVE_KEY);                       // campaign done → fresh next run
+    endGame('win', 'CAMPAIGN COMPLETE',
+      'All 5 zones cleared — final score ' + score.toLocaleString(), '#ffd23a', 'Play Again');
+  }
+}
+function loseGame() {
+  sessionStorage.removeItem(SAVE_KEY);                         // defeat → restart from Zone 01
+  endGame('lose', 'OBJECTIVE DESTROYED', 'The core has fallen', '#ff3322');
+}
 function losePlayer(){
   if (gameState !== 'play') return;
   spawnBlast(playerX, playerZ, 0x18e8ff, 'big'); sfxBoom(true);   // (4) player blast
   lives--; updateLivesHUD();
-  if (lives <= 0) { endGame('lose', 'GAME OVER', 'Out of lives', '#ff3322'); return; }
+  if (lives <= 0) {
+    sessionStorage.removeItem(SAVE_KEY);                       // defeat → restart from Zone 01
+    endGame('lose', 'GAME OVER', 'Out of lives — score ' + score.toLocaleString(), '#ff3322');
+    return;
+  }
   // respawn at the start point with a brief shield (grace period)
   playerX = PR.start.x; playerZ = PR.start.z;
   faceX = 0; faceZ = -1; playerYaw = Math.atan2(faceX, faceZ) + YAW_OFFSET;
@@ -1493,7 +1554,7 @@ function updateEnemyHUD() {
 // ── Scoring + combo ──────────────────────────────────────
 // Combo = kill streak; each kill inside COMBO_WINDOW frames of the last bumps
 // the multiplier (capped). Points = per-type base × multiplier (bonus cars ×1.5).
-let score = 0, combo = 0, comboUntil = 0;
+let score = SAVE.score, combo = 0, comboUntil = 0;   // score carries across zones
 const COMBO_WINDOW = 180;                  // ~3s at 60fps to keep the streak alive
 const COMBO_MAX = 8;
 const PTS = { basic: 100, fast: 150, power: 200, armor: 300 };
@@ -1743,6 +1804,21 @@ function buildHUD() {
 // ─────────────────────────────────────────────
 buildHUD();
 buildScene().then(animate);
+
+// Zone-aware HUD + start screen (carried score/lives show immediately)
+{
+  const zn = String(SAVE.zone + 1).padStart(2, '0');
+  const zEl = document.getElementById('zoneVal'); if (zEl) zEl.textContent = zn;
+  updateScoreHUD(); updateLivesHUD();
+  if (SAVE.zone > 0) {
+    const st = document.getElementById('start');
+    st.querySelector('.go-title').textContent = 'ZONE ' + zn + ' — ' + ZONE.name;
+    st.querySelector('.go-title').style.color = ZONE.accent;
+    st.querySelector('.go-sub').textContent =
+      'Score ' + score.toLocaleString() + ' · Lives ' + lives + ' — defend the core';
+    document.getElementById('startBtn').textContent = 'Enter Zone ' + zn;
+  }
+}
 
 // Start / Restart buttons
 document.getElementById('startBtn').addEventListener('click', () => {
