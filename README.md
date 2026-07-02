@@ -1,6 +1,6 @@
 # Road Battle
 
-**Play it live:** https://roadbattle.vercel.app
+**Play it live:** https://roadblaster.vercel.app
 
 A top-down, retro Battle-City-style car-and-blaster defense game built with Three.js.
 Drive a blaster car, defend the central core from waves of enemy cars, grab power-ups,
