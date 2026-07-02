@@ -106,10 +106,10 @@ html, body {
     <div class="game-title">ROAD<br><b>BLASTER</b></div>
     <div class="sb-divider"></div>
     <div class="stat-row"><span class="stat-label">Lives</span><span class="stat-val" id="livesVal">3</span></div>
-    <div class="stat-row"><span class="stat-label">Score</span><span class="stat-val">14200</span></div>
+    <div class="stat-row"><span class="stat-label">Score</span><span class="stat-val" id="scoreVal">0</span></div>
     <div class="stat-row"><span class="stat-label">Enemies</span><span class="stat-val hi" id="enemyCount">20</span></div>
-    <div class="stat-row"><span class="stat-label">Combo</span><span class="stat-val">x3</span></div>
-    <div class="stat-row"><span class="stat-label">Zone</span><span class="zone-badge">01</span></div>
+    <div class="stat-row"><span class="stat-label">Combo</span><span class="stat-val" id="comboVal">x1</span></div>
+    <div class="stat-row"><span class="stat-label">Zone</span><span class="zone-badge" id="zoneVal">01</span></div>
     <div class="sb-divider"></div>
     <div class="sb-label">Power-ups</div>
     <div id="powerups"></div>
@@ -1443,6 +1443,7 @@ function destroyEnemy(en, silent) {
   if (!silent) sfxBoom(false);               // (4) blast sound (nuke plays one big boom itself)
   if (en.group) scene.remove(en.group);
   killedCount++;
+  scoreKill(en, silent);       // award points + build/keep the combo
   updateEnemyHUD();
   // only FLASHING (bonus) enemies drop power-ups
   if (!silent && en.bonus) {
@@ -1487,6 +1488,32 @@ function updateLivesHUD() {
 function updateEnemyHUD() {
   const el = document.getElementById('enemyCount');
   if (el) el.textContent = String(Math.max(0, WAVE_TOTAL - killedCount)).padStart(2, '0');
+}
+
+// ── Scoring + combo ──────────────────────────────────────
+// Combo = kill streak; each kill inside COMBO_WINDOW frames of the last bumps
+// the multiplier (capped). Points = per-type base × multiplier (bonus cars ×1.5).
+let score = 0, combo = 0, comboUntil = 0;
+const COMBO_WINDOW = 180;                  // ~3s at 60fps to keep the streak alive
+const COMBO_MAX = 8;
+const PTS = { basic: 100, fast: 150, power: 200, armor: 300 };
+const comboMult = () => Math.min(COMBO_MAX, Math.max(1, combo));
+function updateScoreHUD() {
+  const s = document.getElementById('scoreVal'); if (s) s.textContent = score.toLocaleString();
+  const c = document.getElementById('comboVal'); if (c) c.textContent = 'x' + comboMult();
+}
+function scoreKill(en, silent) {
+  const base = PTS[en.type] || 100;
+  if (silent) {                            // nuke: flat points, no streak
+    score += base;
+  } else {
+    combo++; comboUntil = frame + COMBO_WINDOW;
+    score += Math.round(base * comboMult() * (en.bonus ? 1.5 : 1));
+  }
+  updateScoreHUD();
+}
+function decayCombo() {                     // streak lapses if you stop killing
+  if (combo > 0 && frame > comboUntil) { combo = 0; updateScoreHUD(); }
 }
 
 function updateEnemies(dt) {
@@ -1644,6 +1671,7 @@ function animate(t) {
     updateBolts(dt);
     updatePickups();
     updatePowerHUD();
+    decayCombo();
   }
   updateEffects(dt);   // explosions/debris finish even on game over
 
