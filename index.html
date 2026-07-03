@@ -1600,17 +1600,23 @@ function winGame() {
       'All 5 zones cleared — final score ' + score.toLocaleString(), '#ffd23a', 'Play Again');
   }
 }
+// Defeat = retry the CURRENT zone: keep the score you entered it with, fresh lives.
+// (SAVE.score/SAVE.zone are the zone-entry snapshot — untouched during play.)
+function saveZoneRetry() {
+  sessionStorage.setItem(SAVE_KEY, JSON.stringify({ zone: SAVE.zone, score: SAVE.score, lives: 3 }));
+  return 'Retry Zone ' + String(SAVE.zone + 1).padStart(2, '0');
+}
 function loseGame() {
-  sessionStorage.removeItem(SAVE_KEY);                         // defeat → restart from Zone 01
-  endGame('lose', 'OBJECTIVE DESTROYED', 'The core has fallen', '#ff3322');
+  const btn = saveZoneRetry();
+  endGame('lose', 'OBJECTIVE DESTROYED', 'The core has fallen', '#ff3322', btn);
 }
 function losePlayer(){
   if (gameState !== 'play') return;
   spawnBlast(playerX, playerZ, 0x18e8ff, 'big'); sfxBoom(true);   // (4) player blast
   lives--; updateLivesHUD();
   if (lives <= 0) {
-    sessionStorage.removeItem(SAVE_KEY);                       // defeat → restart from Zone 01
-    endGame('lose', 'GAME OVER', 'Out of lives — score ' + score.toLocaleString(), '#ff3322');
+    const btn = saveZoneRetry();
+    endGame('lose', 'GAME OVER', 'Out of lives — score ' + score.toLocaleString(), '#ff3322', btn);
     return;
   }
   // respawn at the start point with a brief shield (grace period)
