@@ -77,8 +77,8 @@ html, body {
 #pbar-wrap { width:220px; height:3px; background:#0a1a2a; }
 #pbar { height:100%; background:#0088ff; width:0%; transition:width 0.1s; }
 
-/* start + game-over overlays */
-#start, #gameover {
+/* start + game-over + pause overlays */
+#start, #gameover, #pause {
   position:fixed; inset:0; background:rgba(3,6,12,0.82); z-index:40;
   display:none; flex-direction:column; align-items:center; justify-content:center; gap:12px;
 }
@@ -124,7 +124,7 @@ html, body {
     <div id="powerups"></div>
     <div class="sb-spacer"></div>
     <div class="sb-divider"></div>
-    <div class="sb-controls"><b>ARROWS/WASD</b> drive<br><b>SPACE</b> fire<br><b>SHIFT</b> turbo<br><b>M</b> sound <span id="muteState">ON</span></div>
+    <div class="sb-controls"><b>ARROWS/WASD</b> drive<br><b>SPACE</b> fire<br><b>SHIFT</b> turbo<br><b>P</b> pause<br><b>M</b> sound <span id="muteState">ON</span></div>
   </div>
 
   <!-- LOADING -->
@@ -141,6 +141,7 @@ html, body {
       <div class="ctrl"><span class="key">▲▼◀▶ / WASD</span><span class="ctrl-lbl">Drive</span></div>
       <div class="ctrl"><span class="key">SPACE</span><span class="ctrl-lbl">Fire</span></div>
       <div class="ctrl"><span class="key">SHIFT</span><span class="ctrl-lbl">Turbo</span></div>
+      <div class="ctrl"><span class="key">P</span><span class="ctrl-lbl">Pause</span></div>
       <div class="ctrl"><span class="key">M</span><span class="ctrl-lbl">Sound</span></div>
     </div>
   </div>
@@ -149,6 +150,12 @@ html, body {
     <div class="go-title">ZONE CLEAR</div>
     <div class="go-sub">All hostiles eliminated</div>
     <button id="restartBtn" class="game-btn">Restart</button>
+  </div>
+
+  <div id="pause">
+    <div class="go-title" style="color:#8aa2ff">PAUSED</div>
+    <div class="go-sub">Press P or Esc to resume</div>
+    <button id="resumeBtn" class="game-btn">Resume</button>
   </div>
 
 <script type="importmap">
@@ -899,7 +906,24 @@ addEventListener('keyup', e => {
   if (k === ' ' || e.code === 'Space') keys.fire = false;
   if (k === 'shift') keys.turbo = false;
   if (k === 'm') toggleMute();
+  if (k === 'p' || k === 'escape') togglePause();
 });
+
+// ── Pause: freezes the sim clock (frame) + suspends audio; render keeps going ──
+function togglePause() {
+  const o = document.getElementById('pause');
+  if (gameState === 'play') {
+    gameState = 'pause';
+    setEngine(false);
+    if (actx && actx.state === 'running') actx.suspend();
+    if (o) o.style.display = 'flex';
+  } else if (gameState === 'pause') {
+    gameState = 'play';
+    lastT = 0;                       // reset dt baseline — no time-jump on resume
+    if (actx && actx.state === 'suspended') actx.resume();
+    if (o) o.style.display = 'none';
+  }
+}
 
 // ─────────────────────────────────────────────
 //  AUDIO — procedural Web Audio (no asset files)
@@ -2041,7 +2065,7 @@ function animate(t) {
   // across refresh rates / background throttling.
   const dt = (lastT && t) ? Math.min((t - lastT) / 16.667, 3) : 1;
   if (t) lastT = t;
-  frame += dt;
+  if (gameState !== 'pause') frame += dt;   // paused → sim clock (and all timers) freeze
   if (gameState === 'play') {
     updatePlayer(dt);
     fireIfReady();
@@ -2052,7 +2076,7 @@ function animate(t) {
     updateHazards(dt);
     decayCombo();
   }
-  updateEffects(dt);   // explosions/debris finish even on game over
+  if (gameState !== 'pause') updateEffects(dt);   // explosions/debris finish even on game over
 
   // Power-up visual states
   if (shieldMesh) shieldMesh.visible = gameState === 'play' && frame < shieldUntil;
@@ -2147,13 +2171,15 @@ document.getElementById('startBtn').addEventListener('click', () => {
   gameState = 'play';
 });
 document.getElementById('restartBtn').addEventListener('click', () => location.reload());
+document.getElementById('resumeBtn').addEventListener('click', togglePause);
 
 // On returning to the tab: reset the delta-time baseline (so the first frame
 // back doesn't jump) and resume audio that the browser auto-suspended.
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) {
     lastT = 0;
-    if (actx && actx.state === 'suspended') actx.resume();
+    // don't wake the audio if the game is deliberately paused
+    if (gameState !== 'pause' && actx && actx.state === 'suspended') actx.resume();
   }
 });
 </script>

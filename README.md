@@ -6,7 +6,7 @@ A top-down, retro Battle-City-style car-and-blaster defense game built with Thre
 Drive a blaster car, defend the central core from waves of enemy cars, grab power-ups,
 and clear all 5 zones of the campaign.
 
-**Controls:** Arrow keys or WASD to drive · Space to fire · Shift to turbo · M sound.
+**Controls:** Arrow keys or WASD to drive · Space to fire · Shift to turbo · P pause · M sound.
 
 ## Tech
 - Single static `index.html` (no build step)
