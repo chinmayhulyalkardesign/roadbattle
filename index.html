@@ -275,6 +275,7 @@ const ZONES = [
   { name:'OLD TOWN',   accent:'#b06aff', alleysC:[2,11], alleysR:[3,10], seed:41, bldOff:6, treeMod:4,
     grass:0x1d2b2e, amb:0xb8c8e8, ambI:2.4, sun:0xe8e8ff, sunI:3.2,
     wave:24, maxAlive:6, spd:1.12, spawnInt:95,
+    brickWall:true,                                       // visible bricks; player shots break them too
     hazards:{ lava:5, fog:true } },
   { name:'BLACKOUT',   accent:'#8aa2ff', alleysC:[4,9],  alleysR:[2,11], seed:59, bldOff:9, treeMod:6,
     grass:0x24242e, amb:0xb0b8d8, ambI:2.5, sun:0xe8e8f8, sunI:3.4,
@@ -760,7 +761,8 @@ async function buildScene() {
     if (PR.bunkers.has(c + ',' + r)) return false;        // central bunkers are solid
     const x = c * TS, z = r * TS;
     const cheby = Math.max(Math.abs(x - BASE.x), Math.abs(z - BASE.z));
-    if (cheby <= PR.ring + 0.6) return false;             // wall / core
+    if (cheby <= 1.9) return false;                       // core plinth stays solid
+    if (nearWall(x, z, 0.66)) return false;               // intact wall segments (breach = open)
     return isRoad(c, r) || cheby < PLAZA_H + 0.4;         // road or plaza (match visible floor)
   };
   {
@@ -828,8 +830,11 @@ async function buildScene() {
       });
     });
 
-    const barMat = new THREE.MeshStandardMaterial({ color: 0x5a5d63, roughness: 0.85, metalness: 0.1 });
-    const stripeMat = new THREE.MeshBasicMaterial({ color: 0x494c52 });
+    // Zone 3 uses clearly-visible BRICK segments (breakable by both sides)
+    const barMat = ZONE.brickWall
+      ? new THREE.MeshStandardMaterial({ color: 0xa04c28, roughness: 0.95 })
+      : new THREE.MeshStandardMaterial({ color: 0x5a5d63, roughness: 0.85, metalness: 0.1 });
+    const stripeMat = new THREE.MeshBasicMaterial({ color: ZONE.brickWall ? 0x71301a : 0x494c52 });
     const RING = 2.6;
     const STEP = 0.9;
     PR.coreR = 1.3;   // bolt within this Chebyshev radius of centre = core hit
@@ -1176,6 +1181,15 @@ function toggleMute() {
   const el = document.getElementById('muteState'); if (el) el.textContent = muted ? 'OFF' : 'ON';
 }
 
+// Is (x,z) beside an INTACT wall segment? Broken segments leave a drivable breach.
+function nearWall(x, z, rad) {
+  for (const w of walls) {
+    if (w.hp <= 0) continue;
+    if (Math.abs(x - w.x) < rad && Math.abs(z - w.z) < rad) return true;
+  }
+  return false;
+}
+
 // Can a car occupy world point (x,z)? Roads + plaza + cleared rubble, minus objective & intact buildings.
 function drivable(x, z) {
   const c = Math.round(x / TS), r = Math.round(z / TS);
@@ -1185,9 +1199,11 @@ function drivable(x, z) {
   if (PR.bunkers && PR.bunkers.has(key)) return false;           // central bunkers solid
   const inP = Math.max(Math.abs(x - PR.base.x), Math.abs(z - PR.base.z)) < PR.plazaH + 0.4;
   if (!(isRoad(c, r) || inP)) return false;                      // buildings & trees block
-  // block the walled objective (wall ring + interior core)
+  // objective: the core stays solid; wall segments block individually, so a
+  // broken segment leaves a breach cars can drive through (Battle City style)
   const cheby = Math.max(Math.abs(x - PR.base.x), Math.abs(z - PR.base.z));
-  if (cheby <= PR.ring + 0.6) return false;
+  if (cheby <= 1.9) return false;                                // core plinth
+  if (nearWall(x, z, 0.62)) return false;                        // intact wall segments
   return true;
 }
 
@@ -1360,7 +1376,8 @@ function updateBolts(dt) {
       if (w.hp <= 0) continue;
       if (Math.abs(b.x - w.x) < 0.5 && Math.abs(b.z - w.z) < 0.5) {
         b.dead = true;
-        if (b.team === 'enemy') { w.hp--; sfxImpact(); if (w.hp <= 0) breakWall(w); else damageWall(w); }  // (5)
+        // brick zones: BOTH sides chip the wall; elsewhere only enemy fire does
+        if (b.team === 'enemy' || ZONE.brickWall) { w.hp--; sfxImpact(); if (w.hp <= 0) breakWall(w); else damageWall(w); }  // (5)
         break;
       }
     }
@@ -1436,7 +1453,7 @@ function playerOnTile(tc, tr) {
 }
 
 function damageWall(w) {                 // 1 hit taken — show cracked/darker
-  w.block.material = new THREE.MeshStandardMaterial({ color: 0x3a3d42, roughness: 0.95 });
+  w.block.material = new THREE.MeshStandardMaterial({ color: ZONE.brickWall ? 0x5c2a16 : 0x3a3d42, roughness: 0.95 });
 }
 function breakWall(w) {                   // destroyed — remove segment, opening a breach
   scene.remove(w.block); scene.remove(w.stripe);
@@ -1525,7 +1542,18 @@ function spawnEnemy() {
 function hitEnemy(en) {
   if (en.dead) return;
   en.hp--; en.hitT = frame;
-  if (en.boss) updateBossBar();
+  if (en.boss) {
+    updateBossBar();
+    // Flinch: a hit sends it backing off for ~0.5s, then it resumes the assault
+    if (frame >= (en.flinchUntil || 0)) {
+      const c = Math.round(en.x / TS), r = Math.round(en.z / TS);
+      const back = en.dir ? { dc: -en.dir.dc, dr: -en.dir.dr } : null;
+      if (back && PR.tileOK(c + back.dc, r + back.dr)) {
+        en.dir = back; en.tgt = { c: c + back.dc, r: r + back.dr };
+      }
+      en.flinchUntil = frame + 30;
+    }
+  }
   if (en.hp <= 0) destroyEnemy(en, false);
 }
 
@@ -1555,13 +1583,13 @@ function destroyEnemy(en, silent) {
 let bossSpawned = false, bossEn = null, bossBarEl = null;
 function spawnBoss() {
   bossSpawned = true;
-  const [c, r] = (PR.spawns && PR.spawns[0]) || [0, 0];
+  const c = 6, r = 0;                                    // top-centre arterial, fully in-bounds
   const x = c * TS, z = r * TS;
   const grp = spawnCar('van', 'blaster-h', x, z, 0, 0xff2233, 0x6a1020);
   grp.scale.setScalar(1.75);
   bossEn = {
     group: grp, x, z, dead: false, dir: { dc: 0, dr: 1 }, boss: true, baseScale: 1.75,
-    type: 'boss', hp: 24, maxHp: 24, speed: 0.030 * ZONE.spd, fireInt: 70,
+    type: 'boss', hp: 35, maxHp: 35, speed: 0.028 * ZONE.spd, fireInt: 70,
     bonus: false, fireT: 90, roamUntil: 0,               // relentless: straight for the core
   };
   enemies.push(bossEn);
@@ -1585,16 +1613,31 @@ function updateBossBar() {
 }
 function bossKilled(en) {
   score += 5000; updateScoreHUD();                       // boss bounty
-  [[-1,-1],[1,1],[-1,1],[1,-1],[0,0]].forEach(([ox,oz], i) =>
-    setTimeout(() => spawnBlast(en.x + ox, en.z + oz, 0xff2233, 'big'), i * 120));
-  sfxBoom(true);
   if (bossBarEl) { bossBarEl.remove(); bossBarEl = null; }
-  winGame();                                             // Zone 05 is last → CAMPAIGN COMPLETE
+  gameState = 'cinematic';                               // sim halts; effects + camera keep running
+  setEngine(false); setEnemyEngine(0);
+  for (const b of bolts) { b.dead = true; scene.remove(b.mesh); }   // clear in-flight bolts
+  bolts.length = 0;
+  // 1) chain of blasts over the wreck…
+  for (let i = 0; i < 8; i++) {
+    const ox = ((i % 3) - 1) * 1.3, oz = (Math.floor(i / 3) - 1) * 1.3;
+    setTimeout(() => { spawnBlast(en.x + ox, en.z + oz, i % 2 ? 0xff2233 : 0xffaa33, 'big'); sfxBoom(i % 3 === 0); }, i * 220);
+  }
+  // 2) …the camera glides in and zooms onto the objective (see `cine` in animate)…
+  cine = { t: 0 };
+  // 3) …the core celebrates with green/gold bursts and a beacon surge…
+  [0, 350, 700, 1050].forEach((d, i) => setTimeout(() => {
+    spawnBlast(PR.base.x + (i % 2 ? 1.1 : -1.1), PR.base.z + (i < 2 ? -1.1 : 1.1),
+               i % 2 ? 0x33ff99 : 0xffe24a, 'big');
+  }, 2400 + d));
+  setTimeout(sfxPowerup, 2400);
+  // 4) …then the campaign-complete overlay
+  setTimeout(winGame, 5000);
 }
 
 // ── Win / lose ──────────────────────────────────────────
 function endGame(state, title, sub, col, btnLabel) {
-  if (gameState !== 'play') return;
+  if (gameState !== 'play' && gameState !== 'cinematic') return;
   gameState = state;
   setEngine(false);            // cut the engine hum on game over
   setEnemyEngine(0);           // and the enemy-engine bed
@@ -1608,7 +1651,7 @@ function endGame(state, title, sub, col, btnLabel) {
   }
 }
 function winGame() {
-  if (gameState !== 'play') return;
+  if (gameState !== 'play' && gameState !== 'cinematic') return;
   score += 1000 * (SAVE.zone + 1); updateScoreHUD();          // zone-clear bonus
   const zn = String(SAVE.zone + 1).padStart(2, '0');
   if (SAVE.zone < ZONES.length - 1) {
@@ -1703,23 +1746,32 @@ function updateEnemies(dt) {
       if (en.bias === undefined) en.bias = (c + r) % 2 ? 1 : -1;   // stable lateral preference
       // Re-decide each time we reach a tile centre (clean grid motion).
       if (atCentre) {
-        en.x = cx; en.z = cz; en.tgt = { c, r };    // hold current cell until a move is chosen
-        const roaming = frame < en.roamUntil;
-        const pref = roaming ? (roamDir(c, r, en) || nextDir(c, r)) : (nextDir(c, r) || roamDir(c, r, en));
-        // Try preferred dir first, then the two laterals, then reverse — so a car
-        // routes AROUND a blockage and can back out of a dead-end instead of freezing.
-        const order = [];
-        if (pref) order.push([pref.dc, pref.dr]);
-        const lat = (pref && pref.dc !== 0) ? [[0, en.bias], [0, -en.bias]] : [[en.bias, 0], [-en.bias, 0]];
-        order.push(lat[0], lat[1]);
-        if (pref) order.push([-pref.dc, -pref.dr]);
-        [[1,0],[-1,0],[0,1],[0,-1]].forEach(d => { if (!order.some(o => o[0] === d[0] && o[1] === d[1])) order.push(d); });
-        let chosen = null;
-        for (const [dc, dr] of order) {
-          if (PR.tileOK(c + dc, r + dr) && !enemyClaims(c + dc, r + dr, en) && !playerOnTile(c + dc, r + dr)) { chosen = { dc, dr }; break; }
+        en.x = cx; en.z = cz;
+        // Boss flinch: while flinching it keeps (or holds) its retreat course
+        const flinching = en.boss && frame < (en.flinchUntil || 0);
+        if (!flinching) {
+          en.tgt = { c, r };    // hold current cell until a move is chosen
+          const roaming = frame < en.roamUntil;
+          const pref = roaming ? (roamDir(c, r, en) || nextDir(c, r)) : (nextDir(c, r) || roamDir(c, r, en));
+          // Try preferred dir first, then the two laterals, then reverse — so a car
+          // routes AROUND a blockage and can back out of a dead-end instead of freezing.
+          const order = [];
+          if (pref) order.push([pref.dc, pref.dr]);
+          const lat = (pref && pref.dc !== 0) ? [[0, en.bias], [0, -en.bias]] : [[en.bias, 0], [-en.bias, 0]];
+          order.push(lat[0], lat[1]);
+          if (pref) order.push([-pref.dc, -pref.dr]);
+          [[1,0],[-1,0],[0,1],[0,-1]].forEach(d => { if (!order.some(o => o[0] === d[0] && o[1] === d[1])) order.push(d); });
+          let chosen = null;
+          for (const [dc, dr] of order) {
+            if (!PR.tileOK(c + dc, r + dr)) continue;
+            if (playerOnTile(c + dc, r + dr)) continue;
+            // the boss ignores other cars' tile claims — everyone yields to it
+            if (!en.boss && enemyClaims(c + dc, r + dr, en)) continue;
+            chosen = { dc, dr }; break;
+          }
+          en.dir = chosen;
+          if (chosen) en.tgt = { c: c + chosen.dc, r: r + chosen.dr };   // reserve the target tile
         }
-        en.dir = chosen;
-        if (chosen) en.tgt = { c: c + chosen.dc, r: r + chosen.dr };   // reserve the target tile
       }
       // Drive toward the reserved target centre, clamped to land exactly on it.
       if (en.dir && en.tgt) {
@@ -1729,6 +1781,10 @@ function updateEnemies(dt) {
         en.x += Math.abs(sx) <= step ? sx : Math.sign(sx) * step;
         en.z += Math.abs(sz) <= step ? sz : Math.sign(sz) * step;
         en.group.rotation.y = Math.atan2(en.dir.dc, en.dir.dr) + YAW_OFFSET;
+      }
+      if (en.boss) {   // never leaves the playfield
+        en.x = Math.min(Math.max(en.x, 0), (COLS - 1) * TS);
+        en.z = Math.min(Math.max(en.z, 0), (ROWS - 1) * TS);
       }
       en.group.position.set(en.x, 0, en.z);
       // Kamikaze: detonate on reaching the objective wall or ramming the player
@@ -2059,6 +2115,7 @@ function updateHazards(dt) {
 //  ANIMATE
 // ─────────────────────────────────────────────
 let frame = 0, lastT = 0;
+let cine = null;   // victory cinematic: camera glides + zooms onto the objective
 function animate(t) {
   requestAnimationFrame(animate);
   // delta-time: 1.0 == one 60fps frame. Clamps big gaps so speed stays consistent
@@ -2088,13 +2145,24 @@ function animate(t) {
     const hex = o.color.getHex();
     if (hex === 0x00ccff) o.intensity = 3 + 1.4 * Math.sin(frame * 0.07);
     if (hex === 0xff2a2a) o.intensity = 2.6 + 1.2 * Math.sin(frame * 0.06);
-    if (hex === 0x33ff99) o.intensity = 5 + 2.5 * Math.sin(frame * 0.06);
+    if (hex === 0x33ff99) o.intensity = (5 + 2.5 * Math.sin(frame * 0.06)) * (cine ? 3 : 1);   // beacon surges on victory
   });
 
   // Bob + spin the objective marker
   if (baseMarker) {
     baseMarker.position.y = 4.2 + 0.35 * Math.sin(frame * 0.06);
-    baseMarker.rotation.y = frame * 0.02;
+    baseMarker.rotation.y = frame * (cine ? 0.09 : 0.02);   // spins up during the victory cinematic
+  }
+
+  // Victory cinematic: after the wreck blasts, glide + zoom the camera onto the core
+  if (cine) {
+    cine.t += dt;
+    const k = Math.min(1, Math.max(0, (cine.t - 80) / 140));   // hold ~1.3s, glide ~2.3s
+    const ease = k * k * (3 - 2 * k);                          // smoothstep
+    camera.zoom = 1 + ease * 1.35;
+    camera.position.set(CX + (PR.base.x - CX) * ease, 80, CZ + (PR.base.z - CZ) * ease);
+    camera.lookAt(camera.position.x, 0, camera.position.z);
+    camera.updateProjectionMatrix();
   }
 
   renderer.render(scene, camera);
@@ -2146,7 +2214,8 @@ function buildHUD() {
 // ─────────────────────────────────────────────
 buildHUD();
 buildScene().then(animate);
-window.RB = { spawnBoss, winGame, loseGame };   // tiny debug/test handle
+window.RB = { spawnBoss, winGame, loseGame,      // tiny debug/test handle
+  killBoss: () => { if (bossEn && !bossEn.dead) destroyEnemy(bossEn, false); } };
 
 // Zone-aware HUD + start screen (carried score/lives show immediately)
 {
